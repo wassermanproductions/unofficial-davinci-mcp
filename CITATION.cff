@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use Wasserman's Unofficial DaVinci MCP in your work, please cite it and credit Sam Wasserman (wassermanproductions.com), per the project's NOTICE and Section 4(d) of the Apache License 2.0."
+title: "Wasserman's Unofficial DaVinci MCP"
+abstract: "An MCP server that lets any AI agent run DaVinci Resolve: live control of Resolve Studio plus free-edition FCPXML/EDL/LUT/premix workflows, reference color matching, beat-aware music cuts, dialogue tightening, broadcast-loudness mixes, editorial knowledge, and a local push-to-talk voice bridge. Unofficial and not affiliated with Blackmagic Design."
+type: software
+authors:
+  - family-names: "Wasserman"
+    given-names: "Sam"
+    website: "https://wassermanproductions.com"
+version: "1.0.0"
+date-released: "2026-07-10"
+license: "Apache-2.0"
+url: "https://github.com/wassermanproductions/unofficial-davinci-mcp"
+repository-code: "https://github.com/wassermanproductions/unofficial-davinci-mcp"
+keywords:
+  - mcp
+  - model-context-protocol
+  - davinci-resolve
+  - video-editing
+  - color-grading
+  - filmmaking
+  - ai-agent
