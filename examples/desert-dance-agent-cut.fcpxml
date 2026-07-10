@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE fcpxml>
+
+<fcpxml version="1.9">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p24" frameDuration="1/24s" width="1920" height="1080" colorSpace="1-1-1 (Rec. 709)" />
+    <asset id="r2" name="desert-dance" src="file:///Users/eklpse1/Desktop/videos/blockout-launch/assets/desert-dance.mp4" start="0s" hasVideo="1" format="r1" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000" />
+    <asset id="r3" name="music-cut" src="file:///private/tmp/claude-502/-Users-eklpse1-Desktop/14810b31-ac14-4a72-ac64-17bb11339462/scratchpad/dvqa/out/music-cut.wav" start="0s" hasVideo="0" hasAudio="1" audioSources="1" audioChannels="2" audioRate="48000" />
+  </resources>
+  <library>
+    <event name="Desert Dance - Agent Cut">
+      <project name="Desert Dance - Agent Cut">
+        <sequence format="r1" duration="209/24s" tcStart="0s" tcFormat="NDF">
+          <spine>
+            <asset-clip name="desert-dance" ref="r2" offset="0/24s" start="12/24s" duration="72/24s">
+              <asset-clip name="music-cut" ref="r3" offset="0/24s" start="0/24s" duration="209/24s" audioRole="dialogue" lane="-1">
+                <marker start="72/24s" duration="1/24s" value="beat cut" note="" />
+              </asset-clip>
+            </asset-clip>
+            <asset-clip name="desert-dance" ref="r2" offset="72/24s" start="144/24s" duration="72/24s">
+              <marker start="144/24s" duration="1/24s" value="beat cut" note="" />
+            </asset-clip>
+            <asset-clip name="desert-dance" ref="r2" offset="144/24s" start="264/24s" duration="65/24s" />
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>

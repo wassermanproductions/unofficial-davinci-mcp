@@ -130,4 +130,35 @@ def capabilities() -> dict[str, Any]:
             "Every mutating tool defaults to dry_run=true and returns a plan. "
             "Re-run with dry_run=false and confirm=true to apply it."
         ),
+        "editorial_knowledge": {
+            "note": (
+                "This server ships editor field guides with concrete numbers "
+                "(LUFS targets, fade lengths, frame offsets, look recipes). "
+                "Before any creative task - cutting to music, tightening "
+                "dialogue, cutting a song, mixing, or matching color - call "
+                "get_editing_knowledge on the matching topic and follow it. "
+                "It is the difference between operating the tools and editing "
+                "well."
+            ),
+            "topics": _knowledge_topics(),
+        },
+        "suggested_workflow": [
+            "1. probe_media / scan_media_folder to learn the footage",
+            "2. get_editing_knowledge for the creative task at hand",
+            "3. beat_grid / cut_music / tighten_dialogue / color_match / mix_plan as needed (dry_run first)",
+            "4. assemble_edit to normalize the cut",
+            "5. live tier: resolve_* tools build it in the app; interchange tier: generate_fcpxml for a one-import timeline",
+        ],
     }
+
+
+def _knowledge_topics() -> list[str]:
+    """Topic list from the skills package, when it ships alongside."""
+    try:
+        import skills
+
+        if hasattr(skills, "list_topics"):
+            return sorted(skills.list_topics())
+    except Exception:
+        pass
+    return []
