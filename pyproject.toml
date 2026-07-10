@@ -21,8 +21,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 beats = ["librosa"]
-# voice: refined by the voice agent - edit only this list.
-voice = ["faster-whisper"]
+voice = ["faster-whisper>=1.0", "sounddevice>=0.4.6", "pynput>=1.7.6", "rumps>=0.4.0"]
 
 [project.scripts]
 unofficial-davinci-mcp = "davinci_mcp.server:main"

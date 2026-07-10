@@ -45,12 +45,47 @@ def _text_content(payload: Any) -> list[dict[str, Any]]:
     return [{"type": "text", "text": text}]
 
 
+def _validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> str | None:
+    """Check arguments against the tool schema's top level.
+
+    Returns a human-readable problem description, or None when the call is
+    well-formed. Kept deliberately shallow (required keys + unknown keys) so a
+    mistyped or missing parameter produces a message that names the valid
+    parameters instead of a raw handler traceback.
+    """
+    properties = schema.get("properties") or {}
+    required = schema.get("required") or []
+    missing = [key for key in required if key not in arguments]
+    unknown = (
+        [key for key in arguments if key not in properties]
+        if schema.get("additionalProperties") is False or properties
+        else []
+    )
+    if not missing and not unknown:
+        return None
+    parts = []
+    if missing:
+        parts.append("missing required: " + ", ".join(sorted(missing)))
+    if unknown:
+        parts.append("unknown: " + ", ".join(sorted(unknown)))
+    return "; ".join(parts) + ". Valid parameters: " + (", ".join(sorted(properties)) or "(none)")
+
+
 def _handle_tool_call(out: TextIO, registry: Registry, request_id: Any, params: dict[str, Any]) -> None:
     name = (params or {}).get("name")
     arguments = (params or {}).get("arguments") or {}
     tool = registry.get(name)
     if tool is None:
         _reply(out, request_id, {"content": _text_content(f"Unknown tool: {name}"), "isError": True})
+        return
+
+    problem = _validate_arguments(tool.schema, arguments)
+    if problem is not None:
+        _reply(
+            out,
+            request_id,
+            {"content": _text_content({"ok": False, "error": f"{name}: {problem}"}), "isError": True},
+        )
         return
 
     try:

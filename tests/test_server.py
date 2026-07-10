@@ -118,3 +118,23 @@ def test_fcpxml_round_trip_over_protocol(make_media, tmp_path):
     assert payload["dry_run"] is False
     assert out.exists()
     assert "<fcpxml" in out.read_text(encoding="utf-8")
+
+
+def test_tool_call_argument_validation():
+    """Wrong parameters get a friendly message naming the valid ones."""
+    responses, _ = _drive(
+        [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "color_match", "arguments": {"reference": "/nope.png"}},
+            },
+        ]
+    )
+    result = responses[2]["result"]
+    assert result["isError"] is True
+    text = result["content"][0]["text"]
+    assert "missing required" in text or "unknown" in text
+    assert "reference_image" in text  # names the valid parameter
