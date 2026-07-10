@@ -12,6 +12,7 @@ message from :mod:`davinci_mcp.resolve_api` instead of raising.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +110,52 @@ def _normalize_clip_plan(clips: list[dict[str, Any]]) -> tuple[list[dict[str, An
             return [], f"clip {index} end_frame must be greater than start_frame."
         normalized.append(entry)
     return normalized, None
+
+
+def _clip_file_path(item: Any) -> str | None:
+    try:
+        value = item.GetClipProperty("File Path")
+    except Exception:  # noqa: BLE001
+        return None
+    if isinstance(value, str) and value:
+        return os.path.realpath(value)
+    return None
+
+
+def _walk_pool_clips(folder: Any):
+    try:
+        for item in folder.GetClipList() or []:
+            yield item
+        for sub in folder.GetSubFolderList() or []:
+            yield from _walk_pool_clips(sub)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _pool_items_by_path(pool: Any, paths: list[str]) -> dict[str, Any]:
+    """Map file paths to media-pool items, robust to ImportMedia dedup.
+
+    ``ImportMedia`` only returns items for media that was newly imported -
+    files already in the pool (or listed twice) come back short, so a
+    positional zip against the request misaligns. Import first, then resolve
+    every requested path by matching the pool items' actual "File Path"
+    property.
+    """
+    wanted = {os.path.realpath(p): p for p in paths}
+    missing = list(dict.fromkeys(wanted))  # unique, order-preserving realpaths
+    try:
+        pool.ImportMedia(list(wanted.values()))
+    except Exception:  # noqa: BLE001
+        pass
+    mapping: dict[str, Any] = {}
+    root = pool.GetRootFolder()
+    for item in _walk_pool_clips(root):
+        real = _clip_file_path(item)
+        if real in wanted and wanted[real] not in mapping:
+            mapping[wanted[real]] = item
+        if len(mapping) == len(set(wanted.values())):
+            break
+    return mapping
 
 
 def _append_payload(item: Any, clip: dict[str, Any]) -> dict[str, Any]:
@@ -297,11 +344,7 @@ def create_timeline(
         if target:
             pool.SetCurrentFolder(target)
 
-    imported = pool.ImportMedia(all_paths) if all_paths else []
-    item_by_path: dict[str, Any] = {}
-    for path, item in zip(all_paths, imported):
-        if item:
-            item_by_path[path] = item
+    item_by_path = _pool_items_by_path(pool, all_paths) if all_paths else {}
 
     timeline = pool.CreateEmptyTimeline(name)
     if not timeline:
@@ -379,11 +422,7 @@ def append_to_timeline(
     if err:
         return err
 
-    imported = pool.ImportMedia(paths) or []
-    item_by_path: dict[str, Any] = {}
-    for path, item in zip(paths, imported):
-        if item:
-            item_by_path[path] = item
+    item_by_path = _pool_items_by_path(pool, paths)
 
     failed: list[dict[str, Any]] = []
     payloads = []
@@ -441,6 +480,38 @@ def _timeline_video_items(timeline: Any, track_index: int) -> list[Any]:
     return list(timeline.GetItemListInTrack("video", track_index) or [])
 
 
+# Resolve LUT folders, preferred order. SetLUT frequently refuses paths that
+# are not inside one of these; installing a copy and using the name relative
+# to the LUT root is the reliable route.
+_LUT_DIRS = [
+    Path("/Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT"),
+    Path.home() / "Library/Application Support/Blackmagic Design/DaVinci Resolve/LUT",
+]
+
+
+def _install_lut(project: Any, lut_path: str) -> str | None:
+    """Copy the LUT into a Resolve LUT folder and return the relative name."""
+    import shutil
+
+    source = Path(lut_path)
+    for root in _LUT_DIRS:
+        if not root.is_dir() or not os.access(root, os.W_OK):
+            continue
+        target_dir = root / "DaVinci MCP"
+        try:
+            target_dir.mkdir(exist_ok=True)
+            target = target_dir / source.name
+            shutil.copyfile(source, target)
+        except OSError:
+            continue
+        try:
+            project.RefreshLUTList()
+        except Exception:  # noqa: BLE001
+            pass
+        return f"DaVinci MCP/{source.name}"
+    return None
+
+
 def apply_lut(
     lut_path: str,
     track_index: int = 1,
@@ -487,14 +558,44 @@ def apply_lut(
     if not items:
         return _error("No clips found on the target video track.", **plan)
 
-    results = []
-    for one_based, item in enumerate(items, start=1):
-        if clip_indexes and one_based not in clip_indexes:
-            continue
-        ok = bool(item.SetLUT(node_index, resolved_lut))
-        results.append({"clip_index": one_based, "name": item.GetName(), "applied": ok})
+    def _apply(path_arg: str) -> list[dict[str, Any]]:
+        applied = []
+        for one_based, item in enumerate(items, start=1):
+            if clip_indexes and one_based not in clip_indexes:
+                continue
+            ok = bool(item.SetLUT(node_index, path_arg))
+            applied.append({"clip_index": one_based, "name": item.GetName(), "applied": ok})
+        return applied
 
-    return _ok(dry_run=False, results=results, applied_count=sum(r["applied"] for r in results), **plan)
+    results = _apply(resolved_lut)
+    installed_as = None
+    if results and not any(r["applied"] for r in results):
+        # Resolve often only accepts LUTs that live inside its LUT folder.
+        # Install a copy there, refresh, and retry with the relative name.
+        installed_as = _install_lut(project, resolved_lut)
+        if installed_as:
+            results = _apply(installed_as)
+
+    applied_count = sum(r["applied"] for r in results)
+    if results and applied_count == 0:
+        return _error(
+            "Resolve rejected the LUT on every clip. The file was "
+            + ("copied into the Resolve LUT folder and retried, still refused - "
+               "check the .cube file itself." if installed_as else
+               "offered by absolute path and no Resolve LUT folder was writable - "
+               "add it via Project Settings > Color Management > Open LUT Folder.")
+            ,
+            results=results,
+            installed_as=installed_as,
+            **plan,
+        )
+    return _ok(
+        dry_run=False,
+        results=results,
+        applied_count=applied_count,
+        installed_as=installed_as,
+        **plan,
+    )
 
 
 def set_grade(

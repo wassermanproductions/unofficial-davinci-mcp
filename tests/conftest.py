@@ -79,11 +79,17 @@ class _Recorder:
 
 
 class FakeMediaPoolItem:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, path: str | None = None) -> None:
         self._name = name
+        self._path = path
 
     def GetName(self) -> str:
         return self._name
+
+    def GetClipProperty(self, key: str):
+        if key == "File Path":
+            return self._path or ""
+        return ""
 
 
 class FakeTimelineItem:
@@ -133,25 +139,55 @@ class FakeTimeline:
         return "24" if key == "timelineFrameRate" else ""
 
 
+class FakeFolder:
+    """Pool folder faithful to the real API surface the code walks."""
+
+    def __init__(self) -> None:
+        self.clips: list[FakeMediaPoolItem] = []
+        self.subfolders: list["FakeFolder"] = []
+
+    def GetClipList(self):
+        return list(self.clips)
+
+    def GetSubFolderList(self):
+        return list(self.subfolders)
+
+
 class FakeMediaPool:
     def __init__(self, rec: _Recorder) -> None:
         self._rec = rec
         self.timeline: FakeTimeline | None = None
+        self.root = FakeFolder()
 
-    def GetRootFolder(self) -> str:
-        return "root"
+    def GetRootFolder(self) -> FakeFolder:
+        return self.root
 
-    def AddSubFolder(self, root, name) -> str:
+    def AddSubFolder(self, root, name) -> FakeFolder:
         self._rec.record("AddSubFolder", root, name)
-        return f"folder:{name}"
+        folder = FakeFolder()
+        self.root.subfolders.append(folder)
+        return folder
 
     def SetCurrentFolder(self, folder) -> bool:
         self._rec.record("SetCurrentFolder", folder)
         return True
 
     def ImportMedia(self, paths) -> list[FakeMediaPoolItem]:
+        """Model the real dedupe: items only for paths not already in the pool."""
         self._rec.record("ImportMedia", list(paths))
-        return [FakeMediaPoolItem(Path(p).stem) for p in paths]
+        import os as _os
+
+        existing = {c.GetClipProperty("File Path") for c in self.root.clips}
+        new_items = []
+        for p in dict.fromkeys(paths):  # unique, order-preserving
+            real = _os.path.realpath(p)
+            if real in existing:
+                continue
+            item = FakeMediaPoolItem(Path(p).stem, real)
+            self.root.clips.append(item)
+            new_items.append(item)
+            existing.add(real)
+        return new_items
 
     def CreateEmptyTimeline(self, name) -> FakeTimeline:
         self._rec.record("CreateEmptyTimeline", name)
