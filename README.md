@@ -21,7 +21,7 @@ You describe the edit in plain language; your agent calls the tools. The server 
 
 ## Two tiers, auto-detected
 
-The server detects at startup whether it can drive a running **DaVinci Resolve Studio** or should fall back to **interchange** files. `resolve_capabilities` tells you which tier you're in and why.
+The server detects at startup whether it can drive a running **DaVinci Resolve Studio (verified on Studio 21)** or should fall back to **interchange** files. `resolve_capabilities` tells you which tier you're in and why.
 
 | Capability | Resolve **Studio** — *live* | **Free** Resolve / not running — *interchange* |
 |---|---|---|
