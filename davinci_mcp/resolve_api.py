@@ -123,6 +123,27 @@ def _module_search_dirs() -> list[Path]:
     return unique
 
 
+def _unwrap_script_module(module: Any) -> Any:
+    """Return the module that actually exposes ``scriptapp``.
+
+    Blackmagic's ``DaVinciResolveScript.py`` is a loader shim: during its own
+    import it loads ``fusionscript`` and swaps it into
+    ``sys.modules['DaVinciResolveScript']``, keeping the real module in its
+    ``script_module`` attribute. Depending on how the shim was imported, the
+    object we hold can still be the pre-swap shim - so normalize to whichever
+    object really has ``scriptapp``.
+    """
+    if hasattr(module, "scriptapp"):
+        return module
+    swapped = sys.modules.get("DaVinciResolveScript")
+    if swapped is not None and hasattr(swapped, "scriptapp"):
+        return swapped
+    inner = getattr(module, "script_module", None)
+    if inner is not None and hasattr(inner, "scriptapp"):
+        return inner
+    return module
+
+
 def _import_module() -> tuple[Any | None, str | None, list[str]]:
     """Import ``DaVinciResolveScript``.
 
@@ -139,7 +160,8 @@ def _import_module() -> tuple[Any | None, str | None, list[str]]:
 
     # A correctly configured PYTHONPATH lets the plain import succeed.
     try:
-        return importlib.import_module("DaVinciResolveScript"), None, [
+        module = importlib.import_module("DaVinciResolveScript")
+        return _unwrap_script_module(module), None, [
             str(path) for path in searched
         ]
     except Exception as direct_exc:  # noqa: BLE001 - report, do not raise
@@ -159,7 +181,7 @@ def _import_module() -> tuple[Any | None, str | None, list[str]]:
                 continue
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            return module, None, [str(path) for path in searched]
+            return _unwrap_script_module(module), None, [str(path) for path in searched]
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{module_file}: {type(exc).__name__}: {exc}")
 

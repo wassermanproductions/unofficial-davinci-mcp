@@ -49,3 +49,22 @@ def test_ffmpeg_detection_returns_path_or_none():
 def test_optional_deps_reports_numpy():
     deps = mode.optional_deps()
     assert deps["numpy"] is True  # declared as a hard dependency
+
+
+def test_unwrap_script_module_handles_loader_shim():
+    """Blackmagic's DaVinciResolveScript.py is a shim that swaps the real
+    fusionscript module into sys.modules during import and keeps it in its
+    script_module attribute; unwrap must find scriptapp either way."""
+    import types
+
+    from davinci_mcp.resolve_api import _unwrap_script_module
+
+    real = types.ModuleType("fusionscript")
+    real.scriptapp = lambda name: object()
+
+    shim = types.ModuleType("DaVinciResolveScript")
+    shim.script_module = real
+    shim.load_dynamic = lambda *a: None
+
+    assert _unwrap_script_module(shim) is real
+    assert _unwrap_script_module(real) is real
