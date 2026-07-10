@@ -158,7 +158,9 @@ def _knowledge_topics() -> list[str]:
         import skills
 
         if hasattr(skills, "list_topics"):
-            return sorted(skills.list_topics())
+            # list of {topic, summary} dicts - pass through so agents see
+            # what each guide covers before deciding to read it.
+            return sorted(skills.list_topics(), key=lambda t: t["topic"])
     except Exception:
         pass
     return []

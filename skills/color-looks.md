@@ -12,7 +12,7 @@ neutral, correctly-exposed starting point. Never bake exposure or white-balance
 fixes into a look LUT — you will re-grade the whole show every time the source
 changes. In this repo that means: run `color_match` (or a manual primary pass) to
 neutralize, then stack the creative look on top as a separate `.cube` via
-`apply_lut`. Order on the node/effect chain: exposure/balance → look LUT → trims.
+`resolve_apply_lut` (live tier). Order on the node/effect chain: exposure/balance → look LUT → trims.
 
 ## Reading a reference image (do this before you touch a slider)
 
@@ -41,7 +41,7 @@ the reference, and what you sanity-check the output against.
   (Lab histogram) for a firmer match that also pulls tint and contrast shape.
 - `strength` is a 0.0–1.0 blend of the match against the original. Treat it as
   "how much of the reference's personality to import."
-- `apply_lut(lut, clips)` — live tier applies the baked `.cube`; both tiers
+- `resolve_apply_lut(lut, clips)` — live tier applies the baked `.cube`; both tiers
   always get the file to import by hand.
 - When a look should be uniform across the whole piece, prefer ONE timeline LUT
   over per-clip `color_match`. Per-clip matching is for reconciling shots that
@@ -87,7 +87,7 @@ the reference, and what you sanity-check the output against.
 - **Fails when:** applied to a piece that needs warmth or approachable skin
   (weddings, lifestyle). It reads harsh and clinical.
 - **This repo:** low `strength` `color_match` to a desaturated high-contrast ref,
-  then bake as a timeline LUT via `apply_lut`. Because saturation loss is uniform,
+  then bake as a timeline LUT via `resolve_apply_lut` (live) or a manual one-drop of the `.cube` (free). Because saturation loss is uniform,
   a single timeline LUT beats per-clip matching.
 
 ### Day-for-night

@@ -28,19 +28,12 @@ _EXPECTED_TOPICS = {
 }
 
 
-def _architecture_tool_surface() -> set[str]:
-    """Parse the tool names listed in ARCHITECTURE.md's 'Tool surface' section."""
-    text = _ARCHITECTURE.read_text(encoding="utf-8")
-    marker = "## Tool surface"
-    start = text.index(marker)
-    # Section runs until the next top-level heading.
-    rest = text[start + len(marker):]
-    end = rest.find("\n## ")
-    section = rest if end == -1 else rest[:end]
-    # Tool names appear as `name` in backticks, some with a trailing (...).
-    names = set(re.findall(r"`([a-z_][a-z0-9_]+)\s*\(", section))
-    names |= set(re.findall(r"`([a-z_][a-z0-9_]+)`", section))
-    return names
+def _registered_tool_surface() -> set[str]:
+    """Tool names actually registered by the server - the live source of truth."""
+    from davinci_mcp.registry import build_registry
+
+    registry = build_registry()
+    return {tool["name"] for tool in registry.list_mcp()}
 
 
 def test_index_is_complete_and_ordered():
@@ -145,8 +138,8 @@ def test_register_tolerates_positional_signature():
     assert calls[0][1] == "both"
 
 
-def test_referenced_tool_names_exist_in_architecture():
-    surface = _architecture_tool_surface()
+def test_referenced_tool_names_exist_in_registry():
+    surface = _registered_tool_surface()
     # Sanity: the parse actually found the surface.
     assert "get_editing_knowledge" in surface
     assert "assemble_edit" in surface
@@ -159,4 +152,4 @@ def test_referenced_tool_names_exist_in_architecture():
         referenced |= set(re.findall(r"\b([a-z_][a-z0-9_]+)\(", text))
 
     missing = referenced - surface
-    assert not missing, f"skills reference unknown tool names: {sorted(missing)}"
+    assert not missing, f"skills reference tools the server does not register: {sorted(missing)}"
