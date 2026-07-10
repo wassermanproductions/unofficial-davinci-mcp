@@ -1,0 +1,7 @@
+# Voice push-to-talk bridge dependencies (macOS).
+# Prefer:  pip install 'unofficial-davinci-mcp[voice]'
+# This file is the fallback if you're not installing the package extras.
+faster-whisper>=1.0
+sounddevice>=0.4.6
+pynput>=1.7.6
+rumps>=0.4.0

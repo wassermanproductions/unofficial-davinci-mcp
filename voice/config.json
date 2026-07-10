@@ -1,0 +1,12 @@
+{
+  "hotkey": "right_option",
+  "auto_enter": false,
+  "model": "base",
+  "input_device": null,
+  "max_seconds": 90,
+  "language": null,
+  "sample_rate": 16000,
+  "restore_clipboard_delay": 0.5,
+  "cue_tones": true,
+  "menubar": true
+}
