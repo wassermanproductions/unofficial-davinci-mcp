@@ -170,6 +170,44 @@ Topics: `color-looks`, `beat-cutting`, `dialogue-editing`, `music-editing`, `mix
 
 ---
 
+## One-command workflows
+
+Four headline tools chain the engines above into a single call. Each one plans first (`dry_run=true`) and returns a plan you can inspect before it writes anything.
+
+### Auto-edit to music
+
+Scan a footage folder, beat-grid the song, cut it to length, and lay a beat-synced edit whose cut density tracks the song's energy — long holds in the intro, 1–2 beat cuts in the chorus — with a no-adjacent-same-source variety rule. Every cut carries a rationale, and the plan exports as FCPXML or feeds `resolve_create_timeline` live.
+
+```text
+auto_edit(music="track.wav", media_dir="./footage", target_seconds=30, style="music_video")
+```
+
+### Search footage by what's said
+
+Transcribe every clip once (cached), then search the spoken words by phrase, all-words, or regex. Hits come back with timestamps and context; `build_selects=true` cuts them into a selects timeline with 0.5 s handles.
+
+```text
+find_in_footage(query="let's go", media="./interviews", mode="phrase", build_selects=true)
+```
+
+### Captions and chapters
+
+Turn a transcript into broadcast-sane SRT/VTT captions (line-length, duration, and orphan-word rules, speech-snapped timing, optional karaoke), and derive YouTube chapters from the speech's own topic shifts.
+
+```text
+generate_captions(media="talk.mp4", format="srt")   #  youtube_chapters(media="talk.mp4")
+```
+
+### Grade a timeline to a reference
+
+Match every clip to a reference frame with one auto-tuned LUT each: the loop reads the quality report and lowers strength (down to a 0.5 floor) until the grade passes its gates, flagging any clip it can't as `needs_human`. Returns per-clip LUTs plus a live/interchange apply manifest.
+
+```text
+grade_timeline(reference_image="look.png", clips=[{"path": "a.mov", "in": 0, "out": 4}])
+```
+
+---
+
 ## Talk to your editor
 
 An optional macOS **push-to-talk voice bridge** lets you hold a key, speak, and drop the transcript straight into your agent terminal — hands on the footage, not the keyboard.

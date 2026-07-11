@@ -24,9 +24,13 @@ from __future__ import annotations
 
 from . import (
     assemble,
+    auto_edit,
     beat_grid,
+    captions,
     color_match,
     dead_air,
+    footage_search,
+    grade_timeline,
     loudness,
     media,
     music_cut,
@@ -36,9 +40,13 @@ from . import (
 
 __all__ = [
     "assemble",
+    "auto_edit",
     "beat_grid",
+    "captions",
     "color_match",
     "dead_air",
+    "footage_search",
+    "grade_timeline",
     "loudness",
     "media",
     "music_cut",
@@ -58,6 +66,10 @@ _ENGINE_MODULES = (
     assemble,
     transcribe,
     text_edit,
+    auto_edit,
+    footage_search,
+    captions,
+    grade_timeline,
 )
 
 
