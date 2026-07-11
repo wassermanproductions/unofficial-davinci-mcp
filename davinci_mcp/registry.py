@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from . import mode, tools_interchange, tools_live
+from . import mode, tools_compound, tools_interchange, tools_live
 
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
@@ -358,6 +358,9 @@ def build_registry() -> Registry:
         ),
     )
 
+    # --- Live: compound tools (one tool, many related actions) ---
+    _register_compound(add)
+
     # --- Interchange (both tiers) ---
     add(
         name="generate_fcpxml",
@@ -428,6 +431,202 @@ def build_registry() -> Registry:
 
     _register_siblings(registry)
     return registry
+
+
+def _register_compound(add: Callable[..., None]) -> None:
+    """Register the six compound live tools, each an ``action``-dispatched tool."""
+
+    add(
+        name="resolve_project",
+        schema=_obj(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["list_projects", "open", "create", "save", "current", "get_settings", "set_settings"],
+                    "description": "list_projects/current/get_settings read; open/create/save/set_settings mutate (dry_run first).",
+                },
+                "name": {"type": "string", "description": "Project name for open/create."},
+                "settings": {"type": "object", "additionalProperties": True, "description": "Key/value project settings for set_settings, e.g. {\"timelineFrameRate\": \"24\", \"timelineResolutionWidth\": \"3840\", \"timelineResolutionHeight\": \"2160\"}."},
+                "keys": {"type": "array", "items": {"type": "string"}, "description": "Optional setting keys for get_settings; omit for the full snapshot."},
+                "dry_run": _DRY_RUN,
+                "confirm": _CONFIRM,
+            },
+            required=["action"],
+        ),
+        handler=_wrap(tools_compound.resolve_project),
+        tier="live",
+        description=(
+            "Project lifecycle + settings. actions: list_projects, open, create, save, "
+            "current, get_settings, set_settings (fps/resolution via Project.SetSetting - "
+            "common keys: timelineFrameRate, timelineResolutionWidth/Height). Orient with "
+            "resolve_project_summary first. Mutating actions dry_run then confirm. Live only."
+        ),
+    )
+
+    add(
+        name="resolve_timelines",
+        schema=_obj(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "switch", "duplicate", "delete", "export", "info"],
+                    "description": "list/info read; switch/duplicate/delete/export mutate (dry_run first).",
+                },
+                "name": {"type": "string", "description": "Target timeline by name (else index, else current)."},
+                "index": {"type": "integer", "minimum": 1, "description": "Target timeline by 1-based index."},
+                "new_name": {"type": "string", "description": "Name for the duplicate (duplicate action)."},
+                "format": {"type": "string", "description": "Export format: fcpxml, fcpxml_1_8/1_9/1_10, fcp7xml, edl, aaf, drt, otio, csv, tab, ale."},
+                "output_path": {"type": "string", "description": "Destination file for export."},
+                "dry_run": _DRY_RUN,
+                "confirm": _CONFIRM,
+            },
+            required=["action"],
+        ),
+        handler=_wrap(tools_compound.resolve_timelines),
+        tier="live",
+        description=(
+            "Timeline management. actions: list, switch (SetCurrentTimeline), duplicate, "
+            "delete, export (friendly format names mapped to Resolve's EXPORT_* constants), "
+            "info (frames, fps, marker + track counts). switch here before editing with "
+            "resolve_edit. Mutating actions dry_run then confirm. Live only."
+        ),
+    )
+
+    add(
+        name="resolve_edit",
+        schema=_obj(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["move_clip", "trim", "ripple_delete", "insert_clip", "set_speed", "add_transition", "add_title", "delete_clip"],
+                    "description": "All mutate. set_speed/add_transition are capability errors (API cannot do them).",
+                },
+                "track_index": {"type": "integer", "minimum": 1, "default": 1, "description": "Video track."},
+                "clip_index": {"type": "integer", "minimum": 1, "description": "1-based clip on the track (move/trim/ripple_delete/delete_clip)."},
+                "record_frame": {"type": "integer", "minimum": 0, "description": "New timeline position (move_clip/insert_clip)."},
+                "start_frame": {"type": "integer", "minimum": 0, "description": "New source in-frame (trim/insert_clip)."},
+                "end_frame": {"type": "integer", "minimum": 1, "description": "New source out-frame (trim/insert_clip)."},
+                "path": {"type": "string", "description": "Media file to place (insert_clip)."},
+                "media_type": {"type": "string", "enum": ["video", "audio"], "description": "insert_clip as video- or audio-only."},
+                "title_name": {"type": "string", "description": "Title template name (add_title)."},
+                "speed": {"type": "number", "description": "Requested speed for set_speed (echoed in the capability error)."},
+                "dry_run": _DRY_RUN,
+                "confirm": _CONFIRM,
+            },
+            required=["action"],
+        ),
+        handler=_wrap(tools_compound.resolve_edit),
+        tier="live",
+        description=(
+            "Edit the CURRENT timeline (switch with resolve_timelines first). actions: "
+            "move_clip and trim (no in-place API - done as delete + re-append of source "
+            "media; grades/effects do NOT carry over), ripple_delete, insert_clip (append "
+            "at record_frame), add_title (inserts; text must be typed in the app), "
+            "delete_clip. set_speed and add_transition return a clear capability error with "
+            "the manual step. Verify visually via resolve_review goto + grab_still. Live only."
+        ),
+    )
+
+    add(
+        name="resolve_review",
+        schema=_obj(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["markers_list", "marker_update", "marker_delete", "goto", "current_timecode", "page", "grab_still", "export_still"],
+                    "description": "markers_list/current_timecode read; goto/page navigate; marker_update/marker_delete/grab_still/export_still mutate (dry_run first).",
+                },
+                "frame": {"type": "integer", "minimum": 0, "description": "Marker timeline frame (marker_update/marker_delete)."},
+                "color": {"type": "string", "description": "New marker color (marker_update)."},
+                "name": {"type": "string", "description": "New marker name, or still filename prefix (export_still)."},
+                "note": {"type": "string", "description": "New marker note (marker_update)."},
+                "duration": {"type": "integer", "minimum": 1, "description": "New marker duration in frames (marker_update)."},
+                "timecode": {"type": "string", "description": "Playhead timecode for goto, e.g. '01:00:05:12'."},
+                "page": {"type": "string", "enum": ["media", "cut", "edit", "fusion", "color", "fairlight", "deliver"], "description": "Page to open (page action)."},
+                "output_path": {"type": "string", "description": "Destination folder for export_still."},
+                "still_format": {"type": "string", "default": "jpg", "description": "Still format: dpx, cin, tif, jpg, png, ppm, bmp, xpm, drx."},
+                "dry_run": _DRY_RUN,
+                "confirm": _CONFIRM,
+            },
+            required=["action"],
+        ),
+        handler=_wrap(tools_compound.resolve_review),
+        tier="live",
+        description=(
+            "Review the CURRENT timeline. actions: markers_list, marker_update (no update "
+            "API - delete + re-add), marker_delete, goto (SetCurrentTimecode), "
+            "current_timecode, page (OpenPage: media/cut/edit/fusion/color/fairlight/"
+            "deliver), grab_still (needs Color page + a parked clip), export_still. Pair "
+            "goto with grab_still to confirm a resolve_edit change. Live only."
+        ),
+    )
+
+    add(
+        name="resolve_media",
+        schema=_obj(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["list_bins", "create_bin", "move_clips_to_bin", "list_clips", "set_metadata", "get_metadata", "relink", "import_files"],
+                    "description": "list_bins/list_clips/get_metadata read; create_bin/move_clips_to_bin/set_metadata/relink/import_files mutate (dry_run first).",
+                },
+                "name": {"type": "string", "description": "New bin name (create_bin)."},
+                "parent": {"type": "string", "description": "Parent bin for create_bin (else root)."},
+                "bin_name": {"type": "string", "description": "Bin to list/target (list_clips, move_clips_to_bin target, import_files)."},
+                "clip_names": {"type": "array", "items": {"type": "string"}, "description": "Media-pool item names to act on."},
+                "metadata": {"type": "object", "additionalProperties": True, "description": "Key/value metadata (set_metadata)."},
+                "keys": {"type": "array", "items": {"type": "string"}, "description": "Single metadata key to read (get_metadata); omit for all."},
+                "folder_path": {"type": "string", "description": "Filesystem folder to relink against (relink)."},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Media files to import (import_files)."},
+                "dry_run": _DRY_RUN,
+                "confirm": _CONFIRM,
+            },
+            required=["action"],
+        ),
+        handler=_wrap(tools_compound.resolve_media),
+        tier="live",
+        description=(
+            "Media pool operations. actions: list_bins (folder tree), create_bin, "
+            "move_clips_to_bin, list_clips (with key properties), set_metadata, "
+            "get_metadata, relink (RelinkClips), import_files (same engine as "
+            "resolve_import_media). Clips are addressed by name. Mutating actions dry_run "
+            "then confirm. Live only."
+        ),
+    )
+
+    add(
+        name="resolve_color",
+        schema=_obj(
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["copy_grade", "save_still", "apply_still", "list_versions", "add_version", "load_version", "set_lut"],
+                    "description": "list_versions reads; the rest mutate (dry_run first).",
+                },
+                "track_index": {"type": "integer", "minimum": 1, "default": 1, "description": "Video track."},
+                "clip_index": {"type": "integer", "minimum": 1, "description": "1-based source clip on the track."},
+                "target_clip_indexes": {"type": "array", "items": {"type": "integer", "minimum": 1}, "description": "Clips to receive a copied grade (copy_grade)."},
+                "version_name": {"type": "string", "description": "Color version name (add_version/load_version)."},
+                "version_type": {"type": "integer", "enum": [0, 1], "default": 0, "description": "0 local, 1 remote color version."},
+                "lut_path": {"type": "string", "description": "A .cube LUT (set_lut; delegates to resolve_apply_lut)."},
+                "still_path": {"type": "string", "description": "A .drx still file to apply (apply_still, via ApplyGradeFromDRX)."},
+                "node_index": {"type": "integer", "minimum": 1, "default": 1, "description": "Grade node (set_lut)."},
+                "dry_run": _DRY_RUN,
+                "confirm": _CONFIRM,
+            },
+            required=["action"],
+        ),
+        handler=_wrap(tools_compound.resolve_color),
+        tier="live",
+        description=(
+            "Color operations on the CURRENT timeline. actions: copy_grade (CopyGrades "
+            "source->targets), save_still (GrabStill to the gallery), apply_still (applies a "
+            ".drx still via the clip node graph - the API cannot apply a gallery album entry "
+            "directly), list_versions/add_version/load_version (color versions; type 0 local "
+            "/ 1 remote), set_lut (delegates to resolve_apply_lut). Mutating actions dry_run "
+            "then confirm. Live only."
+        ),
+    )
 
 
 def _register_siblings(registry: Registry) -> None:
