@@ -671,7 +671,16 @@ def set_grade(
         ok = bool(item.SetCDL(cdl))
         results.append({"clip_index": one_based, "name": item.GetName(), "applied": ok})
 
-    return _ok(dry_run=False, results=results, applied_count=sum(r["applied"] for r in results), **plan)
+    applied_count = sum(r["applied"] for r in results)
+    if results and applied_count == 0:
+        return _error(
+            "Resolve rejected the CDL on every clip. If node_index is above 1, "
+            "note the scripting API cannot create grade nodes - use node_index 1 "
+            "or add nodes in the app first.",
+            results=results,
+            **plan,
+        )
+    return _ok(dry_run=False, results=results, applied_count=applied_count, **plan)
 
 
 def render(
