@@ -159,3 +159,41 @@ Joining track A to track B cleanly:
 - Complex tempo/meter changes, rubato, classical — bar math breaks down.
 - Anything where a licensed track's structure can't be altered per the license —
   check before you cut a phrase out.
+
+
+## Shortening a song like a music editor (the craft, not the amputation)
+
+Cutting a song to length is ARRANGEMENT surgery, not trimming. The amateur
+move - play from the top, stop at the target time, fade - always sounds like
+what it is: a chunk with a fade. The professional method:
+
+1. **Splice matching material at phrase boundaries.** Find two moments A
+   (early) and B (later) where the music is nearly the same thing - same
+   section type, same instrumentation, same harmonic content (end of chorus 1
+   -> end of chorus 2 is the classic). Remove A->B. Because the material on
+   both sides of the seam matches, the join is inaudible. Whole phrases only:
+   4/8/16-bar units, never mid-bar.
+2. **Keep the song's REAL ending.** A composed ending (the final cadence,
+   the last hit, the ring-out the artist wrote) beats anything synthetic.
+   Splice the middle out so the outro lands where you need it. This is the
+   single biggest difference between seamless and obviously-chopped.
+3. **Cut on the downbeat, crossfade the seam.** Splice at the attack of
+   beat 1 so the new downbeat masks the join, and ALWAYS equal-power
+   crossfade - 15-60 ms for well-matched material, up to a full beat when
+   the match is imperfect. Raw butt joins click and thump.
+4. **Ending hierarchy** when the real ending can't be used: (a) button - end
+   ON a strong downbeat hit and let its natural decay ring (cut everything
+   after the hit, keep the reverb tail); (b) phrase-final ring-out with an
+   exponential fade matched to the tail; (c) plain musical fade over the last
+   2-4 bars - the weakest option, use only when nothing else fits.
+5. **Verify the seam by measurement AND ear.** A good splice's spectral
+   change is no bigger than the song's ordinary beat-to-beat variation. If
+   the seam's flux spikes above the song's own transitions, it is audible -
+   pick the next-best splice pair and try again.
+
+Mapping to tools: `cut_music` implements this - it builds a beat-synchronized
+similarity map of the song, prefers a phrase-aligned splice that PRESERVES
+the real ending, crossfades every seam, self-measures seam audibility
+(rejecting audible joins), and falls back through the ending hierarchy. Read
+its per-edit report: `splices` (where and why), `ending_strategy`, and
+`seam_quality` before accepting the edit.
