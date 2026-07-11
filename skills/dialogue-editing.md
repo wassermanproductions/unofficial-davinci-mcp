@@ -164,3 +164,40 @@ Beyond removing silence, you can INCREASE pace by overlapping:
 - Heavily noisy field audio where "silence" is never actually silent — the
   detector needs a clean floor; denoise or set `max_pause` conservatively and
   finish by hand.
+
+## Editing by transcript
+
+Silence detection can only cut the quiet. Word-level editing cuts the *words*.
+Use it when the cleanup lives in the speech, not the gaps:
+
+- **Fillers mid-phrase** — an "um" or "uh" that lands between two words, where no
+  pause exists for `tighten_dialogue` to find.
+- **False starts / restarts** — "what I— what I mean is": a spoken repetition the
+  silence detector sails right past.
+- **Interview cleanup** — trailing "you know", "sort of", scattered "like".
+
+`transcribe_media(path)` runs on-device (faster-whisper) and returns per-word
+timings; Resolve Studio's native in-app transcription is an alternative, but the
+engine works in both tiers and needs no running Resolve. Then
+`cut_by_transcript(media, transcript_json)` builds the cut plan.
+
+**Danger zones — where transcript cuts go robotic:**
+
+- **Never cut the breath in the middle of a phrase.** Removing a filler between
+  two words of one thought slams the words together and sounds synthetic. The
+  tool leaves 60–120 ms handles for exactly this; don't set them to zero.
+- **Keep every 3rd–4th pause.** Collapsing all of them makes cadence metronomic;
+  raise `max_pause` on emotional passages so the air survives.
+- **Filler words carry meaning in emotional takes** — a hesitant "I… um… I don't
+  know" is a performance. Don't machine-strip drama; a leading filler that opens
+  a sentence is kept by default, and `tighten_only` skips word removal entirely.
+
+**Workflow:**
+
+1. `transcribe_media` (or point at an existing transcript JSON).
+2. `cut_by_transcript` as a dry run — inspect the returned **reasons** list: every
+   cut is tagged filler / pause / restart with the offending text.
+3. Human-review the reasons; restore any filler that was a beat. The safety floor
+   refuses to render a pass that guts more than half the take.
+4. Confirm to render a preview, or hand the `assemble_plan` to `assemble_edit` /
+   `generate_fcpxml` for interchange, or apply it live.

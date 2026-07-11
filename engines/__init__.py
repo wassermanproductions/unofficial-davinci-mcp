@@ -30,6 +30,8 @@ from . import (
     loudness,
     media,
     music_cut,
+    text_edit,
+    transcribe,
 )
 
 __all__ = [
@@ -41,6 +43,8 @@ __all__ = [
     "media",
     "music_cut",
     "register",
+    "text_edit",
+    "transcribe",
 ]
 
 # Every engine module that exposes register(add_tool).
@@ -52,6 +56,8 @@ _ENGINE_MODULES = (
     beat_grid,
     music_cut,
     assemble,
+    transcribe,
+    text_edit,
 )
 
 
