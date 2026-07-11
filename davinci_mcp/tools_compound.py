@@ -400,6 +400,22 @@ _EDIT_ACTIONS = [
 ]
 
 
+def _timeline_fps() -> float | None:
+    """Frame rate of the current timeline, when reachable."""
+    status = resolve_api.connect()
+    if not status.reachable:
+        return None
+    try:
+        project = status.resolve.GetProjectManager().GetCurrentProject()
+        timeline = project.GetCurrentTimeline() if project else None
+        if not timeline:
+            return None
+        value = timeline.GetSetting("timelineFrameRate")
+        return float(value) if value else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def resolve_edit(
     action: str,
     track_index: int = 1,
@@ -407,6 +423,8 @@ def resolve_edit(
     record_frame: int | None = None,
     start_frame: int | None = None,
     end_frame: int | None = None,
+    in_seconds: float | None = None,
+    out_seconds: float | None = None,
     path: str | None = None,
     media_type: str | None = None,
     title_name: str | None = None,
@@ -428,6 +446,28 @@ def resolve_edit(
     """
     if action not in _EDIT_ACTIONS:
         return _bad_action(action, _EDIT_ACTIONS)
+
+    # Seconds-based ranges convert exactly like create_timeline's clip plans -
+    # the same vocabulary should work everywhere.
+    if in_seconds is not None or out_seconds is not None:
+        from .tools_live import _probe_fps
+
+        fps_source = path
+        if fps_source is None:
+            fps_source = None  # trim/move on an existing clip: use timeline fps
+        fps = _probe_fps(fps_source) if fps_source else None
+        if fps is None:
+            connected = _timeline_fps()
+            fps = connected
+        if not fps or fps <= 0:
+            return _error(
+                "in_seconds/out_seconds need a frame rate - the media/timeline "
+                "rate could not be determined; pass start_frame/end_frame instead."
+            )
+        if in_seconds is not None:
+            start_frame = int(round(float(in_seconds) * fps))
+        if out_seconds is not None:
+            end_frame = int(round(float(out_seconds) * fps))
 
     # Capability gaps: the documented API cannot do these. Fail honestly.
     if action == "set_speed":

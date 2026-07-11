@@ -494,3 +494,17 @@ def test_compound_confirm_required(mock_resolve):
     assert result["ok"] is False
     assert "confirm=true" in result["error"]
     assert mock_resolve.calls == []
+
+
+def test_resolve_edit_accepts_seconds(mock_resolve, make_media):
+    """in_seconds/out_seconds convert with the media frame rate, like create_timeline."""
+    from davinci_mcp import tools_compound
+
+    clip = make_media("sec", "video", seconds=2.0)
+    result = tools_compound.resolve_edit(
+        "insert_clip", path=clip, in_seconds=0.5, out_seconds=1.5, dry_run=True,
+    )
+    assert result["ok"] is True
+    plan_clip = result["plan"]["clips"][0]
+    assert plan_clip["start_frame"] == 12
+    assert plan_clip["end_frame"] == 36

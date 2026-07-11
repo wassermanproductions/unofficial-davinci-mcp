@@ -505,6 +505,8 @@ def _register_compound(add: Callable[..., None]) -> None:
                 "clip_index": {"type": "integer", "minimum": 1, "description": "1-based clip on the track (move/trim/ripple_delete/delete_clip)."},
                 "record_frame": {"type": "integer", "minimum": 0, "description": "New timeline position (move_clip/insert_clip)."},
                 "start_frame": {"type": "integer", "minimum": 0, "description": "New source in-frame (trim/insert_clip)."},
+                "in_seconds": {"type": "number", "minimum": 0, "description": "Source in point in seconds (converted with the media/timeline frame rate)."},
+                "out_seconds": {"type": "number", "minimum": 0, "description": "Source out point in seconds."},
                 "end_frame": {"type": "integer", "minimum": 1, "description": "New source out-frame (trim/insert_clip)."},
                 "path": {"type": "string", "description": "Media file to place (insert_clip)."},
                 "media_type": {"type": "string", "enum": ["video", "audio"], "description": "insert_clip as video- or audio-only."},
