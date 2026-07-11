@@ -136,3 +136,48 @@ def test_live_tool_reports_friendly_error_when_unreachable(monkeypatch):
     assert result["ok"] is False
     assert result["resolve_state"] == resolve_api.ResolveStatus.FREE_EDITION
     assert "Studio required." in result["error"]
+
+
+def test_create_timeline_seconds_ranges_convert_to_frames(mock_resolve, make_media):
+    """in_seconds/out_seconds must become real frame ranges - never silently drop."""
+    from davinci_mcp import tools_live
+
+    clip = make_media("ranged", "video", seconds=2.0)
+    result = tools_live.create_timeline(
+        "SecCut",
+        clips=[{"path": clip, "in_seconds": 0.5, "out_seconds": 1.5}],
+        dry_run=True,
+    )
+    plan_clip = result["plan"]["clips"][0]
+    assert plan_clip["start_frame"] == 12  # 0.5s * 24fps
+    assert plan_clip["end_frame"] == 36
+
+
+def test_create_timeline_rejects_unknown_clip_keys(mock_resolve, make_media):
+    from davinci_mcp import tools_live
+
+    clip = make_media("badkeys", "video")
+    result = tools_live.create_timeline(
+        "BadCut", clips=[{"path": clip, "in_secs": 1}], dry_run=True,
+    )
+    assert result["ok"] is False
+    assert "unknown keys" in result["error"]
+
+
+def test_create_timeline_music_drops_clip_audio(mock_resolve, make_media):
+    """Supplying music implies picture-only video clips by default."""
+    from davinci_mcp import tools_live
+
+    clip = make_media("vid", "video")
+    music = make_media("song", "audio")
+    result = tools_live.create_timeline(
+        "MusicCut",
+        clips=[{"path": clip, "start_frame": 0, "end_frame": 24}],
+        music_paths=[music],
+        dry_run=False,
+        confirm=True,
+    )
+    assert result["ok"] is True
+    appends = [c for c in mock_resolve.calls if c[0] == "AppendToTimeline"]
+    video_payloads = appends[0][1][0]
+    assert all(p.get("mediaType") == 1 for p in video_payloads)

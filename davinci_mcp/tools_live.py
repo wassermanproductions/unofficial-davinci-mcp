@@ -86,19 +86,79 @@ def _media_type_value(media_type: str | int | None) -> int | None:
     return None
 
 
+def _ffprobe_bin() -> str:
+    import shutil
+
+    found = shutil.which("ffprobe")
+    if found:
+        return found
+    for candidate in ("/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "/usr/bin/ffprobe"):
+        if os.path.exists(candidate):
+            return candidate
+    return "ffprobe"
+
+
+def _probe_fps(path: str) -> float | None:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [_ffprobe_bin(), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=20,
+        ).stdout.strip()
+        if "/" in out:
+            num, den = out.split("/", 1)
+            den_f = float(den)
+            return float(num) / den_f if den_f else None
+        return float(out) if out else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_KNOWN_CLIP_KEYS = {
+    "path", "name", "start_frame", "end_frame", "record_frame", "media_type",
+    "track_index", "note", "in_seconds", "out_seconds", "fps",
+}
+
+
 def _normalize_clip_plan(clips: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
     normalized: list[dict[str, Any]] = []
     for index, clip in enumerate(clips):
         raw = str(clip.get("path", "")).strip()
         if not raw:
             return [], f"clip {index} is missing a path."
+        unknown = set(clip) - _KNOWN_CLIP_KEYS
+        if unknown:
+            return [], (
+                f"clip {index} has unknown keys {sorted(unknown)}. Use "
+                "start_frame/end_frame (frames) or in_seconds/out_seconds "
+                "(seconds; converted with the clip's own frame rate)."
+            )
         path = str(Path(raw).expanduser().resolve())
+        # Seconds-based ranges: convert with the clip's actual frame rate so
+        # a range is never silently dropped.
+        start_frame = clip.get("start_frame")
+        end_frame = clip.get("end_frame")
+        if clip.get("in_seconds") is not None or clip.get("out_seconds") is not None:
+            fps = clip.get("fps")
+            if fps is None:
+                fps = _probe_fps(path)
+            if not fps or fps <= 0:
+                return [], (
+                    f"clip {index} uses in_seconds/out_seconds but the frame "
+                    "rate could not be determined - pass 'fps' explicitly."
+                )
+            if clip.get("in_seconds") is not None:
+                start_frame = int(round(float(clip["in_seconds"]) * fps))
+            if clip.get("out_seconds") is not None:
+                end_frame = int(round(float(clip["out_seconds"]) * fps))
         entry = {
             "index": index,
             "path": path,
             "name": clip.get("name") or Path(path).stem,
-            "start_frame": int(clip.get("start_frame", 0)),
-            "end_frame": int(clip["end_frame"]) if clip.get("end_frame") is not None else None,
+            "start_frame": int(start_frame or 0),
+            "end_frame": int(end_frame) if end_frame is not None else None,
             "record_frame": int(clip["record_frame"]) if clip.get("record_frame") is not None else None,
             "media_type": clip.get("media_type"),
             "track_index": int(clip["track_index"]) if clip.get("track_index") is not None else None,
@@ -295,10 +355,18 @@ def create_timeline(
     music_paths: list[str] | None = None,
     markers: list[dict[str, Any]] | None = None,
     bin_name: str | None = "DaVinci MCP Edit",
+    include_clip_audio: bool | None = None,
     dry_run: bool = True,
     confirm: bool = False,
 ) -> dict[str, Any]:
-    """Create a timeline, optionally seeded from a clip plan with ranges."""
+    """Create a timeline, optionally seeded from a clip plan with ranges.
+
+    ``include_clip_audio`` defaults to True without music and False when
+    ``music_paths`` are given - a supplied music track almost always means
+    the clips' embedded audio should stay out of the cut.
+    """
+    if include_clip_audio is None:
+        include_clip_audio = not music_paths
     guard = _guard_mutation(dry_run, confirm, "Creating a timeline")
     if guard:
         return guard
@@ -318,6 +386,7 @@ def create_timeline(
         "mode": "live",
         "name": name,
         "bin_name": bin_name,
+        "include_clip_audio": include_clip_audio,
         "clips": normalized,
         "music": music_plan,
         "markers": markers or [],
@@ -358,7 +427,10 @@ def create_timeline(
         if not item:
             failed.append({"path": clip["path"], "reason": "media item unavailable after import"})
             continue
-        payloads.append(_append_payload(item, clip))
+        payload = _append_payload(item, clip)
+        if not include_clip_audio and "mediaType" not in payload:
+            payload["mediaType"] = 1  # video only - keep embedded audio out
+        payloads.append(payload)
     appended_count = 0
     if payloads:
         appended = pool.AppendToTimeline(payloads) or []

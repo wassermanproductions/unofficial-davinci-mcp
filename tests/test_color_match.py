@@ -63,8 +63,8 @@ def test_identity_lut_is_near_identity():
     p = tempfile.mktemp(suffix=".cube")
     color_match.bake_cube(identity, p, title="id")
     parsed = fx.parse_cube(p)
-    assert parsed["size"] == 33
-    grid = color_match._lut_grid(33)
+    assert parsed["size"] in (33, 65)
+    grid = color_match._lut_grid(color_match.LUT_SIZE)
     # Identity transform through Lab roundtrip: within small tolerance.
     err = np.max(np.abs(parsed["table"] - grid))
     assert err < 1e-4, err
@@ -89,7 +89,7 @@ def test_color_match_shrinks_lab_distance(method):
     lut = r["lut_path"]
     assert os.path.exists(lut)
     parsed = fx.parse_cube(lut)          # must parse & be valid
-    assert parsed["size"] == 33
+    assert parsed["size"] in (33, 65)
 
     # Measure real Lab distance before/after applying the baked LUT via ffmpeg.
     ref_mean = _mean_lab_of_video(ref)
@@ -100,7 +100,12 @@ def test_color_match_shrinks_lab_distance(method):
     de_after = float(np.sqrt(np.sum((tgt_after - ref_mean) ** 2)))
     shrink = 1.0 - de_after / de_before
     assert de_before > 1.0, "grades should differ meaningfully"
-    assert shrink > 0.60, f"{method}: Lab distance only shrank {shrink:.2%} (before={de_before:.2f} after={de_after:.2f})"
+    # lab_histogram runs through the anti-banding curve treatment (smoothing +
+    # relative slope cap), which trades convergence on flat-patch synthetic
+    # content like testsrc. Photographic content is covered by
+    # test_color_match_converges_on_continuous_tones.
+    floor = 0.60 if method == "reinhard" else 0.38
+    assert shrink > floor, f"{method}: Lab distance only shrank {shrink:.2%} (before={de_before:.2f} after={de_after:.2f})"
 
     # Preview strip should have rendered.
     assert r["preview_path"] and os.path.exists(r["preview_path"])
@@ -124,7 +129,7 @@ def test_strength_zero_is_near_identity_lut():
     )
     r = result["results"][0]
     parsed = fx.parse_cube(r["lut_path"])
-    grid = color_match._lut_grid(33)
+    grid = color_match._lut_grid(color_match.LUT_SIZE)
     assert np.max(np.abs(parsed["table"] - grid)) < 1e-3
 
 
@@ -161,3 +166,59 @@ def test_quality_report_flags_flat_grade(make_media, tmp_path):
     assert result["ok"] is True
     q = result["results"][0]["quality"]
     assert isinstance(q["flags"], list) and "acceptable" in q
+
+
+def test_noise_amplification_flagged(tmp_path, ffmpeg_bin):
+    """A grade that violently stretches shadows on noisy footage must flag noisy."""
+    import subprocess
+    from engines import color_match as cm
+
+    noisy = tmp_path / "noisy.mp4"
+    subprocess.run([
+        ffmpeg_bin, "-y",
+        "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=24",
+        "-vf", "eq=brightness=-0.3,noise=alls=14:allf=t",
+        "-pix_fmt", "yuv420p", str(noisy),
+    ], check=True, capture_output=True)
+    bright_ref = tmp_path / "bright.png"
+    subprocess.run([
+        ffmpeg_bin, "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=1",
+        "-vf", "eq=brightness=0.25:contrast=1.4", "-frames:v", "1", str(bright_ref),
+    ], check=True, capture_output=True)
+
+    result = cm.color_match(
+        str(bright_ref), [str(noisy)], method="lab_histogram",
+        output_dir=str(tmp_path), preview=False, dry_run=False, confirm=True,
+    )
+    q = result["results"][0]["quality"]
+    assert "noise_amplification" in q
+    assert q["noise_amplification"]["shadow_ratio"] > 1.0
+    # dark noisy footage stretched to a bright contrasty ref must trip the flag
+    assert any(f.startswith("noisy") for f in q["flags"]), q
+
+
+def test_color_match_converges_on_continuous_tones(tmp_path, ffmpeg_bin):
+    """On continuous-tone (photographic-like) content the histogram method
+    must converge hard even with the anti-banding treatment active."""
+    import subprocess
+    from engines import color_match as cm
+
+    base = tmp_path / "grad.png"
+    subprocess.run([
+        ffmpeg_bin, "-y", "-f", "lavfi",
+        "-i", "gradients=size=640x360:n=4:duration=1",
+        "-frames:v", "1", str(base),
+    ], check=True, capture_output=True)
+    warm = tmp_path / "warm.png"
+    subprocess.run([
+        ffmpeg_bin, "-y", "-i", str(base),
+        "-vf", "colorbalance=rs=.25:bs=-.2,eq=gamma=0.85:saturation=1.2",
+        str(warm),
+    ], check=True, capture_output=True)
+
+    result = cm.color_match(
+        str(base), [str(warm)], method="lab_histogram",
+        output_dir=str(tmp_path), preview=False, dry_run=False, confirm=True,
+    )
+    assert result["ok"], result
+    assert result["results"][0]["convergence"] > 0.60, result["results"][0]

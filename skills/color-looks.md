@@ -227,3 +227,36 @@ ONLY when `flags` is empty. Judge with numbers, not vibes:
 If the reference is flat, thin, or stylistically far from the footage, use
 `chroma="preserve"` — luminance and contrast adopt the reference while the
 footage keeps its own color life, with only a cast-correcting shift.
+
+## Noise is a rejection, not a style
+
+Grades amplify whatever the compression was hiding. Steep slopes in the low
+end — shadow lifts, aggressive S-curves, strong histogram stretches on thin
+footage — multiply sensor grain, macroblocking, and banding. A grade that
+"matches the reference" but surfaces artifacts is a FAILED grade.
+
+- Read `quality.noise_amplification` on every `color_match` result:
+  `shadow_ratio` or `overall_ratio` meaningfully above 1 means the grade is
+  manufacturing noise. Above ~1.5–1.6 the tool flags it — reject.
+- Remedies, in order: reduce the black-point stretch / shadow slope; lower
+  `strength`; apply temporal noise reduction in Resolve BEFORE the LUT node
+  (Studio's NR is excellent); for banding on flat gradients, grade in a
+  higher bit depth and add fine grain at the end rather than accepting bands.
+- Web-compressed sources (downloaded reference videos) are the highest-risk
+  input: their shadows are already starved of data. Treat any shadow lift on
+  them with suspicion.
+
+## Web-compressed sources: prep before you grade
+
+Downloaded/streamed footage hides its damage in smooth regions - quarter-
+resolution chroma (4:2:0) and starved shadow data. Any real grade surfaces
+it as sky mottling, edge halos, and banding. The LUT is pointwise: it can
+NEVER fix spatial artifacts. Prep the footage first:
+
+    ffmpeg -i src.mp4 -vf "hqdn3d=2:1.5:3:3,deband" -c:v prores_ks -profile:v 3 -c:a pcm_s16le prepped.mov
+
+then probe/match/grade the PREPPED file (its statistics differ from the
+original). In Resolve Studio, temporal NR before the LUT node does the same
+job. Judge the result on a full-resolution sky/wall crop at 100% - thumbnails
+hide mottling. And prefer chroma="preserve" on web sources: per-quantile
+chroma matching amplifies the blocky quarter-res chroma into mottling.
