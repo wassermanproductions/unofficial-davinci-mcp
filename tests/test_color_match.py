@@ -203,12 +203,21 @@ def test_color_match_converges_on_continuous_tones(tmp_path, ffmpeg_bin):
     import subprocess
     from engines import color_match as cm
 
+    import numpy as np
+
+    # ffmpeg's `gradients` source ignores its seed (different pixels every
+    # invocation), so build a deterministic continuous-tone image directly.
+    h, w = 360, 640
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = 40 + 170 * (xx / w)
+    g = 60 + 150 * (yy / h)
+    b = 200 - 120 * ((xx + yy) / (w + h))
+    rgb = np.stack([r, g, b], axis=-1).astype(np.uint8)
     base = tmp_path / "grad.png"
     subprocess.run([
-        ffmpeg_bin, "-y", "-f", "lavfi",
-        "-i", "gradients=size=640x360:n=4:duration=1",
-        "-frames:v", "1", str(base),
-    ], check=True, capture_output=True)
+        ffmpeg_bin, "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+        "-s", f"{w}x{h}", "-i", "-", str(base),
+    ], input=rgb.tobytes(), check=True)
     warm = tmp_path / "warm.png"
     subprocess.run([
         ffmpeg_bin, "-y", "-i", str(base),

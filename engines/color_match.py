@@ -65,10 +65,24 @@ def _run_binary(cmd: list[str]) -> bytes:
     return completed.stdout
 
 
-def _sample_pixels(path: str, kind: str, duration: float | None) -> np.ndarray:
-    """Return an (N,3) array of sampled RGB pixels in [0,1]."""
+def _sample_pixels(
+    path: str,
+    kind: str,
+    duration: float | None,
+    window: tuple[float, float] | None = None,
+) -> np.ndarray:
+    """Return an (N,3) array of sampled RGB pixels in [0,1].
+
+    ``window`` restricts video sampling to a source range - grade the SHOT,
+    not the whole file. Different shots in one file have different content
+    and deserve their own transforms.
+    """
     seeks: list[float | None]
-    if kind == "video" and duration and duration > 0.2:
+    if window is not None:
+        start, end = window
+        span = max(end - start, 0.04)
+        seeks = [start + span * f for f in (0.25, 0.5, 0.75)]
+    elif kind == "video" and duration and duration > 0.2:
         seeks = [duration * 0.5, duration * 0.25, duration * 0.75]
     else:
         seeks = [None]  # image or very short clip: single frame
@@ -163,6 +177,13 @@ def _make_histogram(src_lab: np.ndarray, ref_lab: np.ndarray, strength: float):
     median_slope = float(np.median(slope[valid])) if valid.any() else 1.0
     cap_value = max(L_SLOPE_CAP, 2.2 * median_slope)
     slope = np.where(body, np.clip(slope, 0.0, cap_value), slope)
+    # The top tail gets a GENTLER cap rather than a free pass: in bright
+    # scenes (haze bands, skies at the horizon) the top percentiles are a
+    # large image area, and an uncapped tail amplifies their compression
+    # texture into a crunchy edge. Whites lose a point or two of stretch -
+    # a calm horizon is worth more.
+    tail_cap = max(3.5, 1.8 * median_slope)
+    slope = np.where(~body, np.clip(slope, 0.0, tail_cap), slope)
     rebuilt = np.concatenate([[ys[0]], ys[0] + np.cumsum(slope * dx)])
     # Whatever span the cap removed from the body, hand back to the tail by
     # stretching it toward the original white endpoint.
@@ -174,6 +195,17 @@ def _make_histogram(src_lab: np.ndarray, ref_lab: np.ndarray, strength: float):
             scale = (tail_span + deficit) / tail_span
             first_tail = np.argmax(tail)
             rebuilt[first_tail:] = rebuilt[first_tail] + (rebuilt[first_tail:] - rebuilt[first_tail]) * scale
+    # Ease the cap boundary: the body/tail cap change creates a slope kink
+    # that contours exactly at the tonal band where it sits (an edge in
+    # haze). Blend a local average across a narrow window around the
+    # boundary only - whole-curve smoothing here would drag whites down.
+    boundary = int(n * 0.97)
+    lo_w, hi_w = max(boundary - 10, 1), min(boundary + 10, len(rebuilt) - 2)
+    window = rebuilt[lo_w - 1 : hi_w + 2]
+    eased = np.convolve(np.pad(window, 2, mode="edge"), np.ones(5) / 5.0, mode="valid")
+    blend = np.linspace(0, 1, len(window))
+    blend = np.minimum(blend, blend[::-1]) * 2.0  # 0 at edges, 1 mid-window
+    rebuilt[lo_w - 1 : hi_w + 2] = window * (1 - blend) + eased * blend
     ref_q[:, 0] = np.maximum.accumulate(rebuilt)
 
     # Ensure src_q is strictly increasing per channel for interp x-coords.
@@ -293,11 +325,21 @@ def color_match(
 
     planned = []
     for t in targets:
-        tp = str(Path(t).expanduser())
+        if isinstance(t, dict):
+            raw_path = t.get("path", "")
+            window = None
+            if t.get("in_seconds") is not None or t.get("out_seconds") is not None:
+                window = (float(t.get("in_seconds") or 0.0), float(t.get("out_seconds") or 0.0))
+        else:
+            raw_path, window = t, None
+        tp = str(Path(str(raw_path)).expanduser())
         stem = Path(tp).stem
+        if window is not None:
+            stem = f"{stem}_{window[0]:.2f}-{window[1]:.2f}".replace(".", "p")
         planned.append(
             {
                 "target": tp,
+                "window": window,
                 "exists": os.path.exists(tp),
                 "lut_path": os.path.join(output_dir, f"{stem}_match.cube"),
                 "preview_path": os.path.join(output_dir, f"{stem}_preview.jpg") if preview else None,
@@ -339,7 +381,7 @@ def color_match(
         kind = probe.get("kind", "video")
         dur = probe.get("duration_seconds")
         try:
-            src_px = _sample_pixels(tp, kind, dur)
+            src_px = _sample_pixels(tp, kind, dur, window=entry.get("window"))
         except Exception as exc:
             results.append({"target": tp, "ok": False, "error": f"Decode failed: {exc}"})
             continue
@@ -386,7 +428,11 @@ def color_match(
         highlights = None
         try:
             seeks = [None]
-            if kind == "video" and dur and dur > 1.0:
+            win = entry.get("window")
+            if win is not None:
+                span = max(win[1] - win[0], 0.04)
+                seeks = [win[0] + span * f for f in (0.2, 0.5, 0.8)]
+            elif kind == "video" and dur and dur > 1.0:
                 seeks = [dur * 0.2, dur * 0.5, dur * 0.8]
             for si, sk in enumerate(seeks):
                 frame = _decode_rgb(tp, seek=sk, w=960, h=540)
@@ -401,7 +447,22 @@ def color_match(
                         highlights[key] = max(highlights[key], damage[key])
         except Exception:  # noqa: BLE001 - frame QA is best-effort
             pass
-        quality = _quality_report(src_lab, ref_lab, transform, noise=noise, highlights=highlights)
+        haze_fraction = None
+        try:
+            if 'frame' in dir():
+                gray_L = colorsci.srgb_to_lab(frame)[..., 0]
+                smooth_mask = np.abs(gray_L - _box_blur(gray_L, 7)) < 0.8
+                white_ref = np.percentile(gray_L, 99.5)
+                near_white = gray_L > (white_ref - 6.0)
+                haze_fraction = float((smooth_mask & near_white).mean())
+        except Exception:  # noqa: BLE001
+            pass
+        quality = _quality_report(
+            src_lab, ref_lab, transform,
+            noise=noise, highlights=highlights, haze_fraction=haze_fraction,
+        )
+        if haze_fraction is not None:
+            quality["haze_fraction"] = round(haze_fraction, 3)
 
         results.append(
             {
@@ -582,6 +643,7 @@ def _quality_report(
     transform,
     noise: dict[str, float] | None = None,
     highlights: dict[str, float] | None = None,
+    haze_fraction: float | None = None,
 ) -> dict[str, Any]:
     """Judge the graded result against reference and source - numerically.
 
@@ -599,8 +661,18 @@ def _quality_report(
         flags.append("washed_out: chroma collapsed versus both source and reference")
     if res["black_point_L"] > ref["black_point_L"] + 8:
         flags.append("milky: black point sits far above the reference")
-    if res["white_point_L"] < ref["white_point_L"] - 8:
-        flags.append("dim: white point falls short of the reference")
+    # A shot with no true whites cannot be pushed to the reference's white
+    # point without crunching its brightest band - judge against what the
+    # source can reach with a sane stretch, not the reference's extremes.
+    # Hazy/sky-dominated scenes (a large smooth region sitting AT the
+    # source's white point) get even less: stretching atmospheric haze to
+    # paper-white is exactly the move that rings and crunches.
+    stretch_allowance = 14.0
+    if haze_fraction is not None and haze_fraction > 0.10:
+        stretch_allowance = 6.0
+    achievable_white = min(ref["white_point_L"], src["white_point_L"] + stretch_allowance)
+    if res["white_point_L"] < achievable_white - 6:
+        flags.append("dim: white point falls short of what this source can reach")
     if noise is not None:
         if (noise["shadow_ratio"] > 1.6 or noise["overall_ratio"] > 1.5
                 or noise.get("smooth_region_ratio", 1.0) > 1.6):
@@ -646,9 +718,23 @@ def register(add_tool) -> None:
                 "reference_image": {"type": "string", "description": "Reference still or clip to match toward."},
                 "targets": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "path": {"type": "string"},
+                                    "in_seconds": {"type": "number", "minimum": 0},
+                                    "out_seconds": {"type": "number", "minimum": 0},
+                                },
+                                "required": ["path"],
+                                "additionalProperties": False,
+                            },
+                        ]
+                    },
                     "minItems": 1,
-                    "description": "Target clips/stills to grade toward the reference.",
+                    "description": "Target clips/stills. Pass {path, in_seconds, out_seconds} to grade a specific SHOT of a longer file - per-shot matching beats one LUT across mixed content.",
                 },
                 "method": {"type": "string", "enum": ["reinhard", "lab_histogram"], "default": "reinhard"},
                 "chroma": {
