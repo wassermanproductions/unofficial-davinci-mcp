@@ -73,11 +73,19 @@ def detect(status: resolve_api.ResolveStatus | None = None) -> dict[str, Any]:
 
     if status.reachable:
         tier = LIVE
-        why = (
-            f"Connected to {status.product or 'DaVinci Resolve'}"
-            f"{' ' + status.version if status.version else ''}; "
-            "live scripting is available."
-        )
+        if status.details.get("via_bridge"):
+            why = (
+                "free edition via in-app bridge - live scripting through "
+                f"{status.product or 'DaVinci Resolve'}"
+                f"{' ' + status.version if status.version else ''} "
+                "(Workspace > Scripts)."
+            )
+        else:
+            why = (
+                f"Connected to {status.product or 'DaVinci Resolve'}"
+                f"{' ' + status.version if status.version else ''}; "
+                "live scripting is available."
+            )
     else:
         tier = INTERCHANGE
         why = status.message
@@ -108,6 +116,8 @@ def capabilities() -> dict[str, Any]:
             "message": status.message,
             "product": status.product,
             "version": status.version,
+            "edition": status.details.get("edition"),
+            "via_bridge": bool(status.details.get("via_bridge")),
             "installed_app_paths": status.details.get("installed_app_paths", []),
         },
         "ffmpeg_available": detected["ffmpeg"] is not None,
@@ -117,12 +127,15 @@ def capabilities() -> dict[str, Any]:
         "optional_deps": detected["optional_deps"],
         "tiers": {
             "live": (
-                "DaVinci Resolve Studio, running with external scripting enabled. "
-                "Import media, build and edit timelines, markers, grades/LUTs, and "
-                "renders happen directly in the app."
+                "A running DaVinci Resolve - Studio via external scripting, or "
+                "the FREE edition via the bundled in-app bridge script "
+                "(python -m davinci_mcp.install_bridge, then Workspace > Scripts "
+                "> resolve_bridge once per session). Import media, build and "
+                "edit timelines, markers, grades/LUTs, and renders happen "
+                "directly in the app."
             ),
             "interchange": (
-                "Free DaVinci Resolve, or Resolve not running. The tools write "
+                "Resolve not running (or no bridge started). The tools write "
                 "FCPXML/EDL timelines and marker CSVs that import in one action."
             ),
         },
@@ -148,6 +161,7 @@ def capabilities() -> dict[str, Any]:
             "3. beat_grid / cut_music / tighten_dialogue / color_match / mix_plan as needed (dry_run first)",
             "4. assemble_edit to normalize the cut",
             "5. live tier: resolve_* tools build it in the app; interchange tier: generate_fcpxml for a one-import timeline",
+            "6. live tier follow-through: resolve_project / resolve_timelines / resolve_edit / resolve_review / resolve_media / resolve_color are compound action-dispatched tools covering project settings, timeline management, per-clip edits, marker+still review, media-pool housekeeping, and grades/versions",
         ],
     }
 

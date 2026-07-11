@@ -237,6 +237,24 @@ def _free_installed(app_paths: list[str]) -> bool:
 
 
 def connect() -> ResolveStatus:
+    """Attempt to reach a running DaVinci Resolve and classify the result.
+
+    Studio's external scripting is tried first. When that is unavailable - the
+    usual case on the free edition - an in-app bridge is looked for (see
+    :mod:`bridge.resolve_bridge`): if one is running and answers its health
+    probe, this returns a *reachable* status backed by a proxy that drives
+    Resolve through the bridge, so every live tool works unchanged.
+    """
+    status = _connect_scripting()
+    if status.reachable:
+        return status
+    bridge_status = _connect_bridge()
+    if bridge_status is not None:
+        return bridge_status
+    return status
+
+
+def _connect_scripting() -> ResolveStatus:
     """Attempt to reach a running DaVinci Resolve and classify the result."""
     app_paths = installed_app_paths()
     module, import_error, searched = _import_module()
@@ -340,3 +358,202 @@ def media_pool(project: Any) -> tuple[Any | None, str | None]:
     if not pool:
         return None, "The current project has no accessible media pool."
     return pool, None
+
+
+# --- Free-edition bridge connection ----------------------------------------
+#
+# External scripting is Studio-only, but a script running *inside* Resolve gets
+# the same ``resolve`` object on any edition. The companion bridge script
+# (bridge/resolve_bridge.py) exploits that: launched from Resolve's Scripts
+# menu, it serves a whitelisted subset of the scripting API over localhost and
+# advertises itself in a discovery file. Here we find that bridge and expose a
+# proxy that mirrors the object model so the existing live tools work unchanged.
+
+import json as _json  # noqa: E402 - kept local to the bridge section
+import urllib.error as _urllib_error  # noqa: E402
+import urllib.request as _urllib_request  # noqa: E402
+
+
+class BridgeError(RuntimeError):
+    """A call over the bridge failed (transport, auth, or Resolve-side)."""
+
+
+def bridge_discovery_path() -> Path:
+    """Path to the bridge discovery file - identical logic to the bridge script.
+
+    Honors ``UNOFFICIAL_DAVINCI_MCP_BRIDGE_FILE``, then ``XDG_CONFIG_HOME``,
+    then ~/.config.
+    """
+    override = os.environ.get("UNOFFICIAL_DAVINCI_MCP_BRIDGE_FILE")
+    if override:
+        return Path(override)
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return Path(base) / "unofficial-davinci-mcp" / "bridge.json"
+
+
+class _BridgeClient:
+    """Minimal JSON-over-HTTP client for one bridge session."""
+
+    def __init__(self, host: str, port: int, token: str, timeout: float = 15.0) -> None:
+        self._base = f"http://{host}:{port}"
+        self._token = token
+        self._timeout = timeout
+
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = _json.dumps(payload).encode("utf-8")
+        request = _urllib_request.Request(
+            self._base + path,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self._token}",
+            },
+            method="POST",
+        )
+        try:
+            with _urllib_request.urlopen(request, timeout=self._timeout) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+        except _urllib_error.HTTPError as exc:  # 4xx/5xx carry a JSON body
+            try:
+                body = _json.loads(exc.read().decode("utf-8"))
+            except Exception:  # noqa: BLE001
+                body = {"error": f"HTTP {exc.code}"}
+            raise BridgeError(body.get("error", f"HTTP {exc.code}")) from exc
+        except OSError as exc:
+            raise BridgeError(f"The DaVinci Resolve bridge is unreachable: {exc}") from exc
+
+    def health(self) -> dict[str, Any]:
+        request = _urllib_request.Request(self._base + "/health", method="GET")
+        with _urllib_request.urlopen(request, timeout=self._timeout) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+
+    def call(self, object_path: str, method: str, args: list[Any]) -> Any:
+        payload = {
+            "token": self._token,
+            "object_path": object_path,
+            "method": method,
+            "args": args,
+        }
+        result = self._post("/call", payload)
+        if not result.get("ok"):
+            raise BridgeError(result.get("error", "The bridge refused the call."))
+        return result.get("value")
+
+    def shutdown(self) -> None:
+        self._post("/shutdown", {"token": self._token})
+
+
+def _encode_bridge_arg(value: Any) -> Any:
+    """Serialize a tool-side argument, turning proxies into bridge references."""
+    if isinstance(value, _BridgeProxy):
+        return {"__ref__": value._handle}
+    if isinstance(value, dict):
+        return {key: _encode_bridge_arg(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_encode_bridge_arg(item) for item in value]
+    return value
+
+
+def _decode_bridge_value(client: "_BridgeClient", value: Any) -> Any:
+    """Rehydrate a bridge response: references become proxies, recursively."""
+    if isinstance(value, dict):
+        ref = value.get("__ref__")
+        if ref is not None:
+            return _BridgeProxy(client, ref)
+        return {key: _decode_bridge_value(client, item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_bridge_value(client, item) for item in value]
+    return value
+
+
+class _BridgeMethod:
+    """A bound, callable method name on a proxied object."""
+
+    def __init__(self, client: "_BridgeClient", handle: str, name: str) -> None:
+        self._client = client
+        self._handle = handle
+        self._name = name
+
+    def __call__(self, *args: Any) -> Any:
+        encoded = [_encode_bridge_arg(arg) for arg in args]
+        value = self._client.call(self._handle, self._name, encoded)
+        return _decode_bridge_value(self._client, value)
+
+
+class _BridgeProxy:
+    """Stand-in for a live Resolve object reached through the bridge.
+
+    Attribute access yields a callable that performs the corresponding
+    scripting call over HTTP, so ``resolve.GetProjectManager().GetCurrentProject()``
+    and every other chain the live tools use behaves exactly as it would against
+    the real object.
+    """
+
+    def __init__(self, client: "_BridgeClient", handle: str) -> None:
+        # Stored via __dict__ to avoid recursing through __getattr__.
+        object.__setattr__(self, "_client", client)
+        object.__setattr__(self, "_handle", handle)
+
+    def __getattr__(self, name: str) -> "_BridgeMethod":
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        return _BridgeMethod(self._client, self._handle, name)
+
+    def __repr__(self) -> str:
+        return f"<BridgeProxy {self._handle}>"
+
+
+def _read_discovery() -> dict[str, Any] | None:
+    path = bridge_discovery_path()
+    try:
+        if not path.exists():
+            return None
+        with open(path, "r", encoding="utf-8") as handle:
+            info = _json.load(handle)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(info, dict) or "port" not in info or "token" not in info:
+        return None
+    return info
+
+
+def _connect_bridge() -> ResolveStatus | None:
+    """Look for a live in-app bridge; return a reachable status or ``None``.
+
+    ``None`` means "no usable bridge" - the caller then keeps the original
+    scripting-based status so the free-edition guidance is unchanged.
+    """
+    info = _read_discovery()
+    if info is None:
+        return None
+    host = str(info.get("host") or "127.0.0.1")
+    try:
+        client = _BridgeClient(host, int(info["port"]), str(info["token"]))
+        health = client.health()
+    except Exception:  # noqa: BLE001 - a stale/dead bridge is simply "no bridge"
+        return None
+    if not isinstance(health, dict) or not health.get("ok"):
+        return None
+
+    product = health.get("app") or "DaVinci Resolve"
+    version = health.get("version")
+    app_paths = installed_app_paths()
+    return ResolveStatus(
+        ResolveStatus.REACHABLE,
+        "Connected to DaVinci Resolve through the in-app bridge "
+        "(free edition, live scripting via Workspace > Scripts).",
+        resolve=_BridgeProxy(client, "resolve"),
+        product=product,
+        version=version,
+        details={
+            "edition": "free-via-bridge",
+            "via_bridge": True,
+            "bridge": {
+                "host": host,
+                "port": info.get("port"),
+                "pid": info.get("pid"),
+                "reported_edition": health.get("edition"),
+            },
+            "installed_app_paths": app_paths,
+        },
+    )
