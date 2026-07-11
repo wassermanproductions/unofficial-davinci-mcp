@@ -204,6 +204,7 @@ def color_match(
     *,
     method: str = "reinhard",
     strength: float = 1.0,
+    chroma: str = "match",
     output_dir: str | None = None,
     preview: bool = True,
     dry_run: bool = True,
@@ -211,6 +212,8 @@ def color_match(
 ) -> dict[str, Any]:
     if method not in {"reinhard", "lab_histogram"}:
         return {"ok": False, "error": f"Unknown method '{method}'."}
+    if chroma not in {"match", "preserve"}:
+        return {"ok": False, "error": f"Unknown chroma mode '{chroma}' (match|preserve)."}
     strength = float(np.clip(strength, 0.0, 1.0))
 
     ref_path = str(Path(reference_image).expanduser())
@@ -285,6 +288,20 @@ def color_match(
         else:
             transform, _, _ = _make_histogram(src_lab, ref_lab, strength)
 
+        if chroma == "preserve":
+            # Luminance takes the full match, but a*/b* receive only the mean
+            # shift toward the reference (cast correction). Chroma variance -
+            # the life of the image - stays the source's own. Guards against
+            # flat or stylistically-thin references washing the grade out.
+            base = transform
+            ab_shift = (ref_lab.mean(axis=0) - src_lab.mean(axis=0))[1:3] * strength
+
+            def transform(lab: np.ndarray, _base=base, _shift=ab_shift) -> np.ndarray:
+                out = _base(lab)
+                out[..., 1] = lab[..., 1] + _shift[0]
+                out[..., 2] = lab[..., 2] + _shift[1]
+                return out
+
         title = f"{Path(tp).stem} -> {Path(ref_path).stem} ({method})"
         bake_cube(transform, entry["lut_path"], title=title)
 
@@ -297,6 +314,8 @@ def color_match(
         preview_path = None
         if preview:
             preview_path = _render_preview(tp, kind, dur, entry["lut_path"], entry["preview_path"])
+
+        quality = _quality_report(src_lab, ref_lab, transform)
 
         results.append(
             {
@@ -311,6 +330,7 @@ def color_match(
                 "delta_e_before": round(de_before, 3),
                 "delta_e_after": round(de_after, 3),
                 "convergence": round(shrink, 4),
+                "quality": quality,
             }
         )
 
@@ -324,6 +344,41 @@ def color_match(
         "lut_size": LUT_SIZE,
         "results": results,
     }
+
+
+def _stats(lab: np.ndarray) -> dict[str, float]:
+    flat = lab.reshape(-1, 3)
+    L = flat[:, 0]
+    chroma_mean = float(np.hypot(flat[:, 1], flat[:, 2]).mean())
+    return {
+        "black_point_L": round(float(np.percentile(L, 0.5)), 1),
+        "white_point_L": round(float(np.percentile(L, 99.5)), 1),
+        "contrast_L_std": round(float(L.std()), 1),
+        "mean_chroma": round(chroma_mean, 1),
+    }
+
+
+def _quality_report(src_lab: np.ndarray, ref_lab: np.ndarray, transform) -> dict[str, Any]:
+    """Judge the graded result against reference and source - numerically.
+
+    A match that converges on mean color can still be a bad grade: flat
+    (contrast below the reference), washed out (chroma collapsed), or milky
+    (no black point). These flags exist so an agent can REJECT its own grade
+    and iterate instead of shipping the first LUT that ran.
+    """
+    result_lab = transform(src_lab.copy())
+    src, ref, res = _stats(src_lab), _stats(ref_lab), _stats(result_lab)
+    flags = []
+    if res["contrast_L_std"] < 0.8 * ref["contrast_L_std"]:
+        flags.append("flat: result contrast is well below the reference")
+    if res["mean_chroma"] < 0.6 * src["mean_chroma"] and res["mean_chroma"] < 0.85 * ref["mean_chroma"]:
+        flags.append("washed_out: chroma collapsed versus both source and reference")
+    if res["black_point_L"] > ref["black_point_L"] + 8:
+        flags.append("milky: black point sits far above the reference")
+    if res["white_point_L"] < ref["white_point_L"] - 8:
+        flags.append("dim: white point falls short of the reference")
+    return {"source": src, "reference": ref, "result": res, "flags": flags,
+            "acceptable": not flags}
 
 
 # ---- registration ------------------------------------------------------
@@ -342,6 +397,12 @@ def register(add_tool) -> None:
                     "description": "Target clips/stills to grade toward the reference.",
                 },
                 "method": {"type": "string", "enum": ["reinhard", "lab_histogram"], "default": "reinhard"},
+                "chroma": {
+                    "type": "string",
+                    "enum": ["match", "preserve"],
+                    "default": "match",
+                    "description": "'match' adopts the reference's full color statistics; 'preserve' matches luminance/contrast but keeps the source's own chroma variance, applying only a cast-correcting shift - use when the reference is flat, thin, or stylistically distant.",
+                },
                 "strength": {"type": "number", "minimum": 0.0, "maximum": 1.0, "default": 1.0},
                 "output_dir": {"type": "string", "description": "Where to write .cube LUTs and previews."},
                 "preview": {"type": "boolean", "default": True},
@@ -355,6 +416,7 @@ def register(add_tool) -> None:
             params["reference_image"],
             list(params["targets"]),
             method=params.get("method", "reinhard"),
+            chroma=params.get("chroma", "match"),
             strength=params.get("strength", 1.0),
             output_dir=params.get("output_dir"),
             preview=params.get("preview", True),
@@ -363,5 +425,9 @@ def register(add_tool) -> None:
         ),
         "both",
         "Match target clips/stills to a reference image; bake 33-point .cube "
-        "LUTs (Reinhard or Lab-histogram) with before/after preview strips.",
+        "LUTs (Reinhard or Lab-histogram) with before/after preview strips. "
+        "Every result carries a quality report (black/white points, contrast, "
+        "chroma, and failure flags like flat/washed_out/milky) - read it and "
+        "REJECT the grade if flags are present; 'clean' does not mean "
+        "desaturated. See get_editing_knowledge('color-looks').",
     )

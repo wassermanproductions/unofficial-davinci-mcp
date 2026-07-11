@@ -126,3 +126,38 @@ def test_strength_zero_is_near_identity_lut():
     parsed = fx.parse_cube(r["lut_path"])
     grid = color_match._lut_grid(33)
     assert np.max(np.abs(parsed["table"] - grid)) < 1e-3
+
+
+def test_chroma_preserve_keeps_source_saturation(make_media, tmp_path):
+    """chroma='preserve' must not collapse chroma toward a flat reference."""
+    import numpy as np
+    from engines import color_match as cm
+    from engines import colorsci
+
+    colorful = make_media("colorful", "video")
+    flat_ref = make_media("flatref", "image", desaturate=True)
+
+    result = cm.color_match(
+        flat_ref, [colorful], method="lab_histogram", chroma="preserve",
+        output_dir=str(tmp_path), preview=False, dry_run=False, confirm=True,
+    )
+    assert result["ok"] is True
+    q = result["results"][0]["quality"]
+    # preserved chroma stays close to the source's, not the flat reference's
+    assert q["result"]["mean_chroma"] > 0.7 * q["source"]["mean_chroma"]
+
+
+def test_quality_report_flags_flat_grade(make_media, tmp_path):
+    """Full match to a flat reference must be flagged, not silently accepted."""
+    from engines import color_match as cm
+
+    colorful = make_media("colorful2", "video")
+    flat_ref = make_media("flatref2", "image", desaturate=True)
+
+    result = cm.color_match(
+        flat_ref, [colorful], method="lab_histogram", chroma="match",
+        output_dir=str(tmp_path), preview=False, dry_run=False, confirm=True,
+    )
+    assert result["ok"] is True
+    q = result["results"][0]["quality"]
+    assert isinstance(q["flags"], list) and "acceptable" in q

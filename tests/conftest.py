@@ -42,7 +42,22 @@ def ffmpeg_bin() -> str:
 def make_media(ffmpeg_bin: str, tmp_path: Path) -> Callable[..., str]:
     """Return a factory that writes a short video or audio file and returns its path."""
 
-    def factory(name: str = "clip", kind: str = "video", seconds: float = 2.0) -> str:
+    def factory(
+        name: str = "clip",
+        kind: str = "video",
+        seconds: float = 2.0,
+        desaturate: bool = False,
+    ) -> str:
+        if kind == "image":
+            path = tmp_path / f"{name}.png"
+            vf = "hue=s=0.12,eq=contrast=0.8" if desaturate else "null"
+            cmd = [
+                ffmpeg_bin, "-y", "-f", "lavfi",
+                "-i", "testsrc=duration=1:size=320x240:rate=1",
+                "-vf", vf, "-frames:v", "1", str(path),
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            return str(path)
         if kind == "audio":
             path = tmp_path / f"{name}.wav"
             cmd = [

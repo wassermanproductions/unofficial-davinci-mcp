@@ -190,3 +190,40 @@ Two shorthand emulation targets. Neither is a single LUT; they're biases:
   complexion — get eyes on it.
 - Anything going to broadcast/theatrical delivery with a spec — the look still has
   to pass scopes; a pretty LUT that illegally clips is a reject.
+
+## The bright-and-clean trap (hard-learned)
+
+The most common way to ruin a "bright, clean daylight" match is to read the
+reference as *desaturated* and pull global saturation. Bright commercial
+looks are NOT desaturated — they are **white-balanced and contrasty**:
+
+- Pale sand/walls/skies in the reference are pale because they are *lit and
+  neutral*, not because chroma was removed. Wardrobe, skin, and sky in the
+  same frame stay fully saturated.
+- Casts are removed by **shifting** color (white balance), never by
+  **shrinking** it. A shift moves every color the same distance and keeps
+  their differences; a shrink collapses the differences — that is the flat,
+  lifeless look.
+- Cast removal wants **luminance weighting**: sunlit areas carry most of the
+  cast; shadows carry less. Removing the full cast uniformly turns shadows
+  blue-teal. Remove ~75% in the highlights tapering to ~40% in the shadows.
+- Punch lives in the tonal range: a real black point (0.5th percentile L*
+  under ~8), bright whites (99.5th percentile L* above ~93), and an S-curve
+  through the mids. If the result has less L* contrast than the reference,
+  the grade failed regardless of how close the mean color landed.
+
+### Acceptance checklist — read `quality` before accepting any match
+
+`color_match` returns a `quality` report per target. A grade is acceptable
+ONLY when `flags` is empty. Judge with numbers, not vibes:
+
+| Check | Healthy |
+|---|---|
+| `result.contrast_L_std` | ≥ 0.8 × reference's |
+| `result.mean_chroma` | ≥ 0.6 × source's (unless the look is genuinely monochrome) |
+| `result.black_point_L` | within ~8 L* of the reference's |
+| `result.white_point_L` | within ~8 L* of the reference's |
+
+If the reference is flat, thin, or stylistically far from the footage, use
+`chroma="preserve"` — luminance and contrast adopt the reference while the
+footage keeps its own color life, with only a cast-correcting shift.
