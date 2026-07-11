@@ -367,7 +367,89 @@ def _render_premix(
 
 # ---- registration ------------------------------------------------------
 
+# --- Delivery QC -----------------------------------------------------------
+
+# Named delivery standards: integrated target/tolerance and true-peak ceiling.
+# See skills/mixing.md for the doctrine behind these numbers.
+QC_STANDARDS = {
+    "web": {"integrated": -16.0, "tolerance": 2.0, "true_peak_max": -1.0,
+             "label": "Web / social (-14..-16 LUFS, TP <= -1 dBTP)"},
+    "ebu_r128": {"integrated": -23.0, "tolerance": 0.5, "true_peak_max": -1.0,
+                  "label": "EBU R128 broadcast (-23 LUFS +/-0.5, TP <= -1 dBTP)"},
+    "atsc_a85": {"integrated": -24.0, "tolerance": 2.0, "true_peak_max": -2.0,
+                  "label": "ATSC A/85 US broadcast (-24 LKFS +/-2, TP <= -2 dBTP)"},
+    "netflix": {"integrated": -27.0, "tolerance": 2.0, "true_peak_max": -2.0,
+                 "label": "Netflix/OTT dialogue-gated (-27 LUFS +/-2, TP <= -2 dBTP)"},
+    "podcast": {"integrated": -16.0, "tolerance": 1.5, "true_peak_max": -1.0,
+                 "label": "Podcast stereo (-16 LUFS, TP <= -1 dBTP)"},
+}
+
+
+def audio_qc(path: str, standard: str = "web") -> dict[str, Any]:
+    """Grade a mixed file against a named delivery standard.
+
+    Reports integrated loudness, true peak, and LRA with explicit pass/fail
+    flags. The netflix standard formally measures dialogue-gated loudness;
+    this measures full-program - treat a near-miss there as 'verify with a
+    dialogue-gated meter'.
+    """
+    spec = QC_STANDARDS.get(standard)
+    if spec is None:
+        return {"ok": False, "error": f"Unknown standard '{standard}'. Valid: {sorted(QC_STANDARDS)}"}
+    m = measure_one(path)
+    if m.get("integrated_lufs") is None:
+        return {"ok": False, "error": "Could not measure loudness.", "path": path}
+    integrated = m["integrated_lufs"]
+    tp = m.get("true_peak_dbtp")
+    lra = m.get("loudness_range_lu")
+    failures = []
+    if abs(integrated - spec["integrated"]) > spec["tolerance"]:
+        failures.append(
+            f"loudness: {integrated:.1f} LUFS is outside {spec['integrated']:.0f} "
+            f"+/-{spec['tolerance']:g} LU"
+        )
+    if tp is not None and tp > spec["true_peak_max"]:
+        failures.append(
+            f"true_peak: {tp:.1f} dBTP exceeds the {spec['true_peak_max']:g} dBTP ceiling"
+        )
+    if lra is not None and lra > 20.0:
+        failures.append(f"lra: {lra:.1f} LU is unusually wide - check for QC comments")
+    return {
+        "ok": True,
+        "standard": standard,
+        "standard_label": spec["label"],
+        "measured": {"integrated_lufs": integrated, "true_peak_dbtp": tp, "loudness_range_lu": lra},
+        "target": {"integrated": spec["integrated"], "tolerance": spec["tolerance"],
+                    "true_peak_max": spec["true_peak_max"]},
+        "failures": failures,
+        "passes": not failures,
+    }
+
+
 def register(add_tool) -> None:
+    add_tool(
+        "audio_qc",
+        {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Mixed audio or video file to grade."},
+                "standard": {
+                    "type": "string",
+                    "enum": sorted(QC_STANDARDS),
+                    "default": "web",
+                    "description": "Delivery standard to grade against.",
+                },
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        lambda params: audio_qc(params["path"], params.get("standard", "web")),
+        "both",
+        "Grade a mix against a delivery standard (web, ebu_r128, atsc_a85, "
+        "netflix, podcast): integrated LUFS, true peak, LRA with explicit "
+        "pass/fail. Run before delivering ANY mix - platforms and broadcast "
+        "QC reject on these numbers. See get_editing_knowledge('mixing').",
+    )
     add_tool(
         "measure_loudness",
         {

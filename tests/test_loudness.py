@@ -56,3 +56,27 @@ def test_premix_hits_target_within_1LU():
 def test_confirm_required():
     plan = loudness.mix_plan(fx.dialogue_wav(), dry_run=False, confirm=False)
     assert plan["ok"] is False
+
+
+def test_audio_qc_pass_and_fail(make_media, tmp_path, ffmpeg_bin):
+    import subprocess
+    from engines import loudness
+
+    loud = tmp_path / "loud.wav"
+    subprocess.run([
+        ffmpeg_bin, "-y", "-f", "lavfi", "-i", "sine=frequency=300:duration=4",
+        "-af", "volume=6dB", str(loud),
+    ], check=True, capture_output=True)
+    r = loudness.audio_qc(str(loud), "ebu_r128")
+    assert r["ok"] is True and r["passes"] is False
+    assert any(f.startswith("loudness") or f.startswith("true_peak") for f in r["failures"])
+
+    ok_mix = tmp_path / "ok.wav"
+    subprocess.run([
+        ffmpeg_bin, "-y", "-f", "lavfi", "-i", "sine=frequency=300:duration=4",
+        "-af", "loudnorm=I=-16:TP=-1.5:LRA=7", str(ok_mix),
+    ], check=True, capture_output=True)
+    r2 = loudness.audio_qc(str(ok_mix), "web")
+    assert r2["ok"] is True and r2["passes"] is True, r2
+
+    assert loudness.audio_qc(str(ok_mix), "bogus")["ok"] is False

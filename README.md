@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/logo.png" alt="Wasserman's Unofficial DaVinci MCP" width="360">
+
 # Wasserman's Unofficial DaVinci MCP
 
 **Let any AI agent run DaVinci Resolve for you** — Claude Code, Codex, Cursor, Hermes, or any MCP client. Cut clips to the beat, match a reference look, tighten dialogue, hit a loudness spec, and build timelines — either by driving Resolve Studio live, or by generating clean import files for the free edition.

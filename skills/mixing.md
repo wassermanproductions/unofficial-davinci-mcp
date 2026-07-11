@@ -173,3 +173,33 @@ processor comes in on anything beyond a rough.
 - **Noisy/problematic source** — denoise, de-ess, de-hum, and dialogue repair come
   BEFORE leveling; a rough-mix leveler can't fix broken source, it just makes the
   problems a consistent loudness.
+
+## Delivery standards & broadcast QC — know the numbers
+
+Every mix targets a delivery spec. Defaulting to "sounds fine" fails QC.
+The measured values that matter: Integrated loudness (LUFS/LKFS), True Peak
+(dBTP), and Loudness Range (LRA). `measure_loudness` reports all three;
+`audio_qc` grades them against a named standard.
+
+| Delivery | Integrated | True peak | Notes |
+|---|---|---|---|
+| EBU R128 (EU broadcast) | −23 LUFS ±0.5 | ≤ −1 dBTP | LRA typically ≤ 15–20 LU; many broadcasters require ≤ −2/−3 dBTP for final masters |
+| ATSC A/85 (US broadcast) | −24 LKFS ±2 | ≤ −2 dBTP | Dialogue-anchored measurement |
+| Netflix / premium OTT | −27 LUFS (dialogue-gated) ±2 | ≤ −2 dBTP | Measured on dialogue, not full mix |
+| Web / social / YouTube | −14 to −16 LUFS | ≤ −1 dBTP | Platforms normalize down, never up — louder than −14 just gets turned down |
+| Podcast | −16 LUFS stereo / −19 mono | ≤ −1 dBTP | |
+
+What FAILS a broadcast QC pass (beyond loudness):
+- **True-peak overs** — even one intersample peak above the ceiling.
+- **Loudness out of tolerance** — integrated beyond the ± window.
+- **Silence** — dropouts / dead air beyond ~2–3 seconds (or missing channels:
+  one silent side of a stereo pair is an automatic fail).
+- **Phase problems** — badly out-of-phase stereo that collapses in mono.
+- **Sync drift** — audio leading/lagging picture beyond ±1 frame.
+- **Clipping/distortion** — sustained flat-topped waveforms.
+
+Practice: mix to the platform target from the start (the default here is
+−16 LUFS web). For broadcast delivery, re-target −23/−24 and re-run
+`audio_qc` with the matching standard — never just turn the master down at
+the end; ducking depths and bed levels shift perceptibly with the anchor.
+Stay inside safe levels even when the client never names a spec.
