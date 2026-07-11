@@ -21,7 +21,7 @@ from .registry import Registry, build_registry
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "unofficial-davinci-mcp"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 
 
 def _write(out: TextIO, message: dict[str, Any]) -> None:

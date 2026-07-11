@@ -126,7 +126,7 @@ One request, seven tool calls: read the tier, probe the media, find the tempo, a
 
 ---
 
-## The 23 tools
+## The 37 tools
 
 Every mutating tool defaults to `dry_run=true` and returns a plan; re-run with `dry_run=false` and `confirm=true` to apply it. Tier **both** = works in free or Studio; **live** = requires DaVinci Resolve Studio.
 
