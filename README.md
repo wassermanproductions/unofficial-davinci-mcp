@@ -10,6 +10,7 @@
 ![Platform: macOS · Linux](https://img.shields.io/badge/platform-macOS_·_Linux-6e7681)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-3fb950)
 ![MCP: stdio](https://img.shields.io/badge/MCP-stdio_·_2024--11--05-bc8cff)
+[![Support Sam Wasserman on Ko-fi](https://img.shields.io/badge/Ko--fi-support%20Sam%20Wasserman-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/samwasserman)
 
 ![Reference color match — BEFORE, REFERENCE, and the MATCHED result baked to a .cube LUT](docs/images/hero-colormatch.jpg)
 
